@@ -24,49 +24,54 @@ jobs:
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/mihomo-party-org/mihomo-party.git || true
-          git fetch upstream
+          git fetch upstream --tags
 
-      - name: Check for updates
+      - name: Check for new tag
         id: check
         run: |
-          UPSTREAM_COMMIT=$(git rev-parse upstream/master)
-          echo "upstream_commit=$UPSTREAM_COMMIT" >> $GITHUB_OUTPUT
+          # Get latest upstream tag
+          UPSTREAM_TAG=$(git tag -l --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          UPSTREAM_LATEST=$(git ls-remote --tags upstream | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
 
-          # Check if there are new commits
-          if git merge-base --is-ancestor upstream/master HEAD; then
-            echo "has_updates=false" >> $GITHUB_OUTPUT
-            echo "No new updates from upstream"
+          echo "Current latest tag: $UPSTREAM_TAG"
+          echo "Upstream latest tag: $UPSTREAM_LATEST"
+          echo "upstream_tag=$UPSTREAM_LATEST" >> $GITHUB_OUTPUT
+
+          # Check if upstream has a newer tag
+          if [ "$UPSTREAM_TAG" != "$UPSTREAM_LATEST" ] && [ -n "$UPSTREAM_LATEST" ]; then
+            echo "has_new_tag=true" >> $GITHUB_OUTPUT
+            echo "New tag detected: $UPSTREAM_LATEST"
           else
-            echo "has_updates=true" >> $GITHUB_OUTPUT
-            echo "New updates available from upstream"
+            echo "has_new_tag=false" >> $GITHUB_OUTPUT
+            echo "No new tag from upstream"
           fi
 
-          BRANCH_NAME="sync-upstream-$(date +%Y%m%d)"
+          BRANCH_NAME="sync-upstream-$UPSTREAM_LATEST"
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
       - name: Create sync branch and merge
-        if: steps.check.outputs.has_updates == 'true'
+        if: steps.check.outputs.has_new_tag == 'true'
         run: |
           git checkout -b ${{ steps.check.outputs.branch_name }}
-          git merge upstream/master --no-edit || true
+          git merge ${{ steps.check.outputs.upstream_tag }} --no-edit || true
 
       - name: Push sync branch
-        if: steps.check.outputs.has_updates == 'true'
+        if: steps.check.outputs.has_new_tag == 'true'
         run: |
           git push origin ${{ steps.check.outputs.branch_name }} --force
 
       - name: Create Pull Request
-        if: steps.check.outputs.has_updates == 'true'
+        if: steps.check.outputs.has_new_tag == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: ${{ steps.check.outputs.branch_name }}
           base: smart_core
-          title: 'chore: sync with upstream mihomo-party'
+          title: 'chore: sync with upstream ${{ steps.check.outputs.upstream_tag }}'
           body: |
             Automated PR to sync with upstream [mihomo-party-org/mihomo-party](https://github.com/mihomo-party-org/mihomo-party).
 
-            **Upstream commit:** ${{ steps.check.outputs.upstream_commit }}
+            **Upstream tag:** ${{ steps.check.outputs.upstream_tag }}
 
             Please review and resolve any conflicts manually if present.
           labels: |
