@@ -15,8 +15,8 @@ if (process.argv.slice(2).length !== 0) {
 
 /* ======= mihomo alpha======= */
 const MIHOMO_ALPHA_VERSION_URL =
-  'https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/version.txt'
-const MIHOMO_ALPHA_URL_PREFIX = `https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha`
+  'https://github.com/xflash-panda/mihomo/releases/download/Prerelease-Alpha/version.txt'
+const MIHOMO_ALPHA_URL_PREFIX = `https://github.com/xflash-panda/mihomo/releases/download/Prerelease-Alpha`
 let MIHOMO_ALPHA_VERSION
 
 const MIHOMO_ALPHA_MAP = {
@@ -46,8 +46,8 @@ async function getLatestAlphaVersion() {
 
 /* ======= mihomo smart ======= */
 const MIHOMO_SMART_VERSION_URL =
-  'https://github.com/vernesong/mihomo/releases/download/Prerelease-Alpha/version.txt'
-const MIHOMO_SMART_URL_PREFIX = `https://github.com/vernesong/mihomo/releases/download/Prerelease-Alpha`
+  'https://github.com/xflash-panda/mihomo/releases/download/Prerelease-Alpha/version.txt'
+const MIHOMO_SMART_URL_PREFIX = `https://github.com/xflash-panda/mihomo/releases/download/Prerelease-Alpha`
 let MIHOMO_SMART_VERSION
 
 const MIHOMO_SMART_MAP = {
@@ -76,8 +76,8 @@ async function getLatestSmartVersion() {
 
 /* ======= mihomo release ======= */
 const MIHOMO_VERSION_URL =
-  'https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt'
-const MIHOMO_URL_PREFIX = `https://github.com/MetaCubeX/mihomo/releases/download`
+  'https://github.com/xflash-panda/mihomo/releases/latest/download/version.txt'
+const MIHOMO_URL_PREFIX = `https://github.com/xflash-panda/mihomo/releases/download`
 let MIHOMO_VERSION
 
 const MIHOMO_MAP = {
@@ -97,7 +97,7 @@ async function getLatestReleaseVersion() {
       method: 'GET'
     })
     let v = await response.text()
-    MIHOMO_VERSION = v.trim() // Trim to remove extra whitespaces
+    MIHOMO_VERSION = v.trim()
     console.log(`Latest release version: ${MIHOMO_VERSION}`)
   } catch (error) {
     console.error('Error fetching latest release version:', error.message)
