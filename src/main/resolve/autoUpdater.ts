@@ -16,7 +16,7 @@ import i18next from 'i18next'
 export async function checkUpdate(): Promise<IAppVersion | undefined> {
   const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
   const res = await chromeRequest.get(
-    'https://github.com/mihomo-party-org/mihomo-party/releases/latest/download/latest.yml',
+    'https://github.com/xflash-panda/clash-party/releases/latest/download/latest.yml',
     {
       headers: { 'Content-Type': 'application/octet-stream' },
       proxy: {
@@ -56,7 +56,7 @@ function compareVersions(a: string, b: string): number {
 
 export async function downloadAndInstallUpdate(version: string): Promise<void> {
   const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
-  const baseUrl = `https://github.com/mihomo-party-org/mihomo-party/releases/download/v${version}/`
+  const baseUrl = `https://github.com/xflash-panda/clash-party/releases/download/v${version}/`
   const fileMap = {
     'win32-x64': `clash-party-windows-${version}-x64-setup.exe`,
     'win32-ia32': `clash-party-windows-${version}-ia32-setup.exe`,
