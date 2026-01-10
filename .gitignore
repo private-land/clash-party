@@ -10,4 +10,5 @@ out
 *.ttf
 party.md
 CLAUDE.md
+.claude/
 tsconfig.node.tsbuildinfo
