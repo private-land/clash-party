@@ -43,8 +43,34 @@ function getBindingName() {
   throw new Error(`Unsupported platform: ${platform}-${arch}`)
 }
 
+function getNpmPackageName() {
+  switch (platform) {
+    case 'win32':
+      return `@mihomo-party/sysproxy-win32-${arch}-msvc`
+    case 'darwin':
+      return `@mihomo-party/sysproxy-darwin-${arch}`
+    case 'linux':
+      if (isMusl()) {
+        return `@mihomo-party/sysproxy-linux-${arch}-musl`
+      }
+      return `@mihomo-party/sysproxy-linux-${arch}-gnu`
+  }
+  return null
+}
+
 function loadBinding() {
   const bindingName = getBindingName()
+
+  // Try to load from npm package first
+  const npmPkgName = getNpmPackageName()
+  if (npmPkgName) {
+    try {
+      nativeBinding = require(npmPkgName)
+      return nativeBinding
+    } catch {
+      // Fall through to extra/sidecar lookup
+    }
+  }
 
   // 查找项目根目录的 extra/sidecar
   let currentDir = __dirname

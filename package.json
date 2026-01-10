@@ -12,7 +12,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
     "prepare": "node scripts/prepare.mjs",
-    "prepare:dev": "node scripts/update-version.mjs && node scripts/prepare.mjs",
+    "prepare:dev": "node scripts/prepare-dev.mjs && node scripts/update-version.mjs && node scripts/prepare.mjs",
     "updater": "node scripts/updater.mjs",
     "checksum": "node scripts/checksum.mjs",
     "copy-legacy": "node scripts/copy-legacy-artifacts.mjs",
@@ -31,7 +31,6 @@
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
-    "sysproxy-rs": "file:src/native/sysproxy",
     "adm-zip": "^0.5.16",
     "axios": "^1.13.2",
     "chokidar": "^5.0.0",
@@ -40,6 +39,7 @@
     "express": "^5.1.0",
     "i18next": "^25.6.2",
     "iconv-lite": "^0.7.1",
+    "sysproxy-rs": "file:src/native/sysproxy",
     "webdav": "^5.8.0",
     "ws": "^8.18.3",
     "yaml": "^2.8.1"
