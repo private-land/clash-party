@@ -1,0 +1,74 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Run weekly on Sunday at midnight UTC
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: smart_core
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/mihomo-party-org/mihomo-party.git || true
+          git fetch upstream
+
+      - name: Check for updates
+        id: check
+        run: |
+          UPSTREAM_COMMIT=$(git rev-parse upstream/master)
+          echo "upstream_commit=$UPSTREAM_COMMIT" >> $GITHUB_OUTPUT
+
+          # Check if there are new commits
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            echo "No new updates from upstream"
+          else
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+            echo "New updates available from upstream"
+          fi
+
+          BRANCH_NAME="sync-upstream-$(date +%Y%m%d)"
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create sync branch and merge
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          git checkout -b ${{ steps.check.outputs.branch_name }}
+          git merge upstream/master --no-edit || true
+
+      - name: Push sync branch
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          git push origin ${{ steps.check.outputs.branch_name }} --force
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_updates == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ steps.check.outputs.branch_name }}
+          base: smart_core
+          title: 'chore: sync with upstream mihomo-party'
+          body: |
+            Automated PR to sync with upstream [mihomo-party-org/mihomo-party](https://github.com/mihomo-party-org/mihomo-party).
+
+            **Upstream commit:** ${{ steps.check.outputs.upstream_commit }}
+
+            Please review and resolve any conflicts manually if present.
+          labels: |
+            sync
+            automated
