@@ -84,14 +84,13 @@ export async function downloadAndInstallUpdate(version: string): Promise<void> {
   // URL uses full version with + encoded as %2B
   const urlVersion = encodeURIComponent(version)
   const baseUrl = `https://github.com/xflash-panda/clash-party/releases/download/v${urlVersion}/`
-  // Filename uses base version only (without build metadata after +)
-  const fileVersion = version.split('+')[0]
+  // Filename uses full version (electron-builder uses full version in artifact names)
   const fileMap = {
-    'win32-x64': `clash-party-windows-${fileVersion}-x64-setup.exe`,
-    'win32-ia32': `clash-party-windows-${fileVersion}-ia32-setup.exe`,
-    'win32-arm64': `clash-party-windows-${fileVersion}-arm64-setup.exe`,
-    'darwin-x64': `clash-party-macos-${fileVersion}-x64.pkg`,
-    'darwin-arm64': `clash-party-macos-${fileVersion}-arm64.pkg`
+    'win32-x64': `clash-party-windows-${version}-x64-setup.exe`,
+    'win32-ia32': `clash-party-windows-${version}-ia32-setup.exe`,
+    'win32-arm64': `clash-party-windows-${version}-arm64-setup.exe`,
+    'darwin-x64': `clash-party-macos-${version}-x64.pkg`,
+    'darwin-arm64': `clash-party-macos-${version}-arm64.pkg`
   }
   let file = fileMap[`${process.platform}-${process.arch}`]
   if (isPortable()) {
