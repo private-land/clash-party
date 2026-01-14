@@ -1,6 +1,6 @@
 {
   "name": "mihomo-party",
-  "version": "1.8.9+stp.1",
+  "version": "1.8.9+stp.2",
   "description": "Clash Party",
   "main": "./out/main/index.js",
   "author": "mihomo-party-org",
