@@ -33,7 +33,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "adm-zip": "^0.5.16",
     "axios": "^1.13.2",
-    "chokidar": "^5.0.0",
+    "chokidar": "^4.0.3",
     "croner": "^9.1.0",
     "crypto-js": "^4.2.0",
     "express": "^5.1.0",
