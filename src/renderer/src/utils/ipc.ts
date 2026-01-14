@@ -1,5 +1,11 @@
 import { TitleBarOverlayOptions } from 'electron'
 
+export interface DownloadProgress {
+  downloaded: number
+  total: number
+  percent: number
+}
+
 function checkIpcError<T>(response: unknown): T {
   if (response && typeof response === 'object' && 'invokeError' in response) {
     throw (response as { invokeError: unknown }).invokeError

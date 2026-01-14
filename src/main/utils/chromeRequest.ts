@@ -15,6 +15,21 @@ export interface RequestOptions {
   responseType?: 'text' | 'json' | 'arraybuffer'
   followRedirect?: boolean
   maxRedirects?: number
+  /** Number of retry attempts for failed requests (default: 0) */
+  retry?: number
+  /** Delay in ms between retries (default: 1000) */
+  retryDelay?: number
+  /** Callback for download progress */
+  onProgress?: (progress: DownloadProgress) => void
+}
+
+export interface DownloadProgress {
+  /** Bytes downloaded so far */
+  downloaded: number
+  /** Total bytes (may be 0 if content-length unknown) */
+  total: number
+  /** Download percentage (0-100, or -1 if total unknown) */
+  percent: number
 }
 
 export interface Response<T = unknown> {
@@ -26,10 +41,14 @@ export interface Response<T = unknown> {
 }
 
 /**
- * Make HTTP request using Chromium's network stack (via electron.net)
- * This provides better compatibility, HTTP/2 support, and system certificate integration
+ * Sleep for specified milliseconds
  */
-export async function request<T = unknown>(
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Make a single HTTP request attempt using Chromium's network stack
+ */
+async function requestOnce<T = unknown>(
   url: string,
   options: RequestOptions = {}
 ): Promise<Response<T>> {
@@ -41,7 +60,8 @@ export async function request<T = unknown>(
     timeout = 30000,
     responseType = 'text',
     followRedirect = true,
-    maxRedirects = 20
+    maxRedirects = 20,
+    onProgress
   } = options
 
   return new Promise((resolve, reject) => {
@@ -95,6 +115,8 @@ export async function request<T = unknown>(
 
         const chunks: Buffer[] = []
         let redirectCount = 0
+        let downloaded = 0
+        let totalSize = 0
 
         req.on('redirect', () => {
           redirectCount++
@@ -116,8 +138,18 @@ export async function request<T = unknown>(
             responseHeaders[rawHeaders[i].toLowerCase()] = rawHeaders[i + 1]
           }
 
+          // Get content length for progress tracking
+          totalSize = parseInt(responseHeaders['content-length'] || '0', 10)
+
           res.on('data', (chunk: Buffer) => {
             chunks.push(chunk)
+            downloaded += chunk.length
+
+            // Report progress if callback provided
+            if (onProgress) {
+              const percent = totalSize > 0 ? Math.round((downloaded / totalSize) * 100) : -1
+              onProgress({ downloaded, total: totalSize, percent })
+            }
           })
 
           res.on('end', () => {
@@ -187,6 +219,34 @@ export async function request<T = unknown>(
         reject(new Error(`Failed to setup proxy: ${String(error)}`))
       })
   })
+}
+
+/**
+ * Make HTTP request using Chromium's network stack (via electron.net)
+ * This provides better compatibility, HTTP/2 support, and system certificate integration
+ * Supports automatic retry on failure
+ */
+export async function request<T = unknown>(
+  url: string,
+  options: RequestOptions = {}
+): Promise<Response<T>> {
+  const { retry = 0, retryDelay = 1000 } = options
+  let lastError: Error | undefined
+
+  for (let attempt = 0; attempt <= retry; attempt++) {
+    try {
+      return await requestOnce<T>(url, options)
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+
+      // If we have retries left, wait and try again
+      if (attempt < retry) {
+        await sleep(retryDelay)
+      }
+    }
+  }
+
+  throw lastError || new Error('Request failed')
 }
 
 /**

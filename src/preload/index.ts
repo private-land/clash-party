@@ -159,7 +159,8 @@ const validListenChannels = [
   'controledMihomoConfigUpdated',
   'profileConfigUpdated',
   'groupsUpdated',
-  'rulesUpdated'
+  'rulesUpdated',
+  'updateDownloadProgress'
 ] as const
 
 // 允许的 send channels 白名单
