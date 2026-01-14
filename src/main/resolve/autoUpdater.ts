@@ -15,24 +15,33 @@ import i18next from 'i18next'
 
 export async function checkUpdate(): Promise<IAppVersion | undefined> {
   const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
-  const res = await chromeRequest.get(
-    'https://github.com/xflash-panda/clash-party/releases/latest/download/latest.yml',
-    {
-      headers: { 'Content-Type': 'application/octet-stream' },
-      proxy: {
-        protocol: 'http',
-        host: '127.0.0.1',
-        port: mixedPort
-      },
-      responseType: 'text'
+  await appLogger.info(`Checking for updates via proxy port ${mixedPort}`)
+  try {
+    const res = await chromeRequest.get(
+      'https://github.com/xflash-panda/clash-party/releases/latest/download/latest.yml',
+      {
+        headers: { 'Content-Type': 'application/octet-stream' },
+        proxy: {
+          protocol: 'http',
+          host: '127.0.0.1',
+          port: mixedPort
+        },
+        responseType: 'text'
+      }
+    )
+    const latest = parse(res.data as string) as IAppVersion
+    const currentVersion = app.getVersion()
+    await appLogger.info(`Current version: ${currentVersion}, Latest version: ${latest.version}`)
+    if (compareVersions(latest.version, currentVersion) > 0) {
+      await appLogger.info(`Update available: ${latest.version}`)
+      return latest
+    } else {
+      await appLogger.info('Already up to date')
+      return undefined
     }
-  )
-  const latest = parse(res.data as string) as IAppVersion
-  const currentVersion = app.getVersion()
-  if (compareVersions(latest.version, currentVersion) > 0) {
-    return latest
-  } else {
-    return undefined
+  } catch (e) {
+    await appLogger.error('Failed to check for updates', e)
+    throw e
   }
 }
 
@@ -56,13 +65,17 @@ function compareVersions(a: string, b: string): number {
 
 export async function downloadAndInstallUpdate(version: string): Promise<void> {
   const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
-  const baseUrl = `https://github.com/xflash-panda/clash-party/releases/download/v${version}/`
+  // URL uses full version with + encoded as %2B
+  const urlVersion = encodeURIComponent(version)
+  const baseUrl = `https://github.com/xflash-panda/clash-party/releases/download/v${urlVersion}/`
+  // Filename uses base version only (without build metadata after +)
+  const fileVersion = version.split('+')[0]
   const fileMap = {
-    'win32-x64': `clash-party-windows-${version}-x64-setup.exe`,
-    'win32-ia32': `clash-party-windows-${version}-ia32-setup.exe`,
-    'win32-arm64': `clash-party-windows-${version}-arm64-setup.exe`,
-    'darwin-x64': `clash-party-macos-${version}-x64.pkg`,
-    'darwin-arm64': `clash-party-macos-${version}-arm64.pkg`
+    'win32-x64': `clash-party-windows-${fileVersion}-x64-setup.exe`,
+    'win32-ia32': `clash-party-windows-${fileVersion}-ia32-setup.exe`,
+    'win32-arm64': `clash-party-windows-${fileVersion}-arm64-setup.exe`,
+    'darwin-x64': `clash-party-macos-${fileVersion}-x64.pkg`,
+    'darwin-arm64': `clash-party-macos-${fileVersion}-arm64.pkg`
   }
   let file = fileMap[`${process.platform}-${process.arch}`]
   if (isPortable()) {
@@ -82,6 +95,7 @@ export async function downloadAndInstallUpdate(version: string): Promise<void> {
       file = file.replace('macos', 'catalina')
     }
   }
+  await appLogger.info(`Downloading update: ${baseUrl}${file}`)
   try {
     if (!existsSync(path.join(dataDir(), file))) {
       const res = await chromeRequest.get(`${baseUrl}${file}`, {
