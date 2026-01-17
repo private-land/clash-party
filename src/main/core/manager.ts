@@ -989,7 +989,7 @@ async function setPublicDNS(): Promise<void> {
     const { originDNS } = await getAppConfig()
     if (!originDNS) {
       await getOriginDNS()
-      await setDNS('223.5.5.5')
+      await setDNS('198.18.0.1')
     }
   } else {
     if (setPublicDNSTimer) clearTimeout(setPublicDNSTimer)
