@@ -252,7 +252,7 @@ export async function createProfile(item: Partial<IProfileItem>): Promise<IProfi
   const baseOptions: Omit<FetchOptions, 'useProxy' | 'timeout'> = {
     url: item.url,
     mixedPort,
-    userAgent: userAgent || `mihomo.party/v${app.getVersion()} (clash.meta)`,
+    userAgent: userAgent || `mihomo.panda/v${app.getVersion()} (clash.meta)`,
     authToken: item.authToken,
     substore: newItem.substore || false
   }
