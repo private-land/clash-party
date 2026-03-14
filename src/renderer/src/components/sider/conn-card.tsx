@@ -6,7 +6,6 @@ import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { IoLink } from 'react-icons/io5'
-
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { platform } from '@renderer/utils/init'
 import { Line } from 'react-chartjs-2'
@@ -61,6 +60,8 @@ const ConnCard: React.FC<Props> = (props) => {
   const currentDownloadRef = useRef<number | undefined>(undefined)
   const hasShowTrafficRef = useRef(false)
   const drawingRef = useRef(false)
+  // 保存待绘制的流量数据，避免跳过更新导致图标闪烁
+  const pendingTrafficRef = useRef<{ up: number; down: number } | null>(null)
 
   // Chart.js 配置
   const chartData = useMemo(() => {
@@ -139,21 +140,30 @@ const ConnCard: React.FC<Props> = (props) => {
         data.push(info.up + info.down)
         return data
       })
-      if (platform === 'darwin' && showTraffic) {
-        if (drawingRef.current) return
-        drawingRef.current = true
-        try {
-          await drawSvg(info.up, info.down, currentUploadRef, currentDownloadRef)
-          hasShowTrafficRef.current = true
-        } catch {
-          // ignore
-        } finally {
-          drawingRef.current = false
+      if (platform === 'darwin') {
+        if (showTraffic) {
+          // 保存最新流量数据，确保绘制完成后使用最新值
+          pendingTrafficRef.current = { up: info.up, down: info.down }
+          if (drawingRef.current) return
+          drawingRef.current = true
+          try {
+            // 循环处理待绘制数据，直到没有新数据
+            while (pendingTrafficRef.current) {
+              const { up, down } = pendingTrafficRef.current
+              pendingTrafficRef.current = null
+              await drawSvg(up, down, currentUploadRef, currentDownloadRef)
+            }
+            hasShowTrafficRef.current = true
+          } catch {
+            // ignore
+          } finally {
+            drawingRef.current = false
+          }
+        } else if (hasShowTrafficRef.current) {
+          // 只在从 showTraffic=true 切换到 false 时恢复一次原始图标
+          window.electron.ipcRenderer.send('trayIconUpdate', trayIconBase64, false)
+          hasShowTrafficRef.current = false
         }
-      } else {
-        if (!hasShowTrafficRef.current) return
-        window.electron.ipcRenderer.send('trayIconUpdate', trayIconBase64)
-        hasShowTrafficRef.current = false
       }
     },
     [showTraffic]
@@ -203,8 +213,13 @@ const ConnCard: React.FC<Props> = (props) => {
             ref={setNodeRef}
             {...attributes}
             {...listeners}
-            className={`${match ? 'bg-primary' : 'hover:bg-primary/30'} ${isDragging ? `${disableAnimations ? '' : 'scale-[0.95] tap-highlight-transparent'}` : ''}`}
+            className={`${match ? 'bg-primary' : 'hover:bg-primary/30'} ${disableAnimations ? '' : `motion-reduce:transition-transform-background ${isDragging  ? 'scale-[0.95] tap-highlight-transparent' : ''}`}`}
           >
+            {!hideConnectionCardWave && (
+              <div className="w-full h-full absolute top-0 left-0 pointer-events-none overflow-hidden rounded-[14px]">
+                <Line data={chartData} options={chartOptions} />
+              </div>
+            )}
             <CardBody className="pb-1 pt-0 px-0">
               <div className="flex justify-between">
                 <Button
@@ -240,11 +255,6 @@ const ConnCard: React.FC<Props> = (props) => {
               </h3>
             </CardFooter>
           </Card>
-          {!hideConnectionCardWave && (
-            <div className="w-full h-full absolute top-0 left-0 pointer-events-none overflow-hidden rounded-[14px]">
-              <Line data={chartData} options={chartOptions} />
-            </div>
-          )}
         </>
       ) : (
         <Card
@@ -252,7 +262,7 @@ const ConnCard: React.FC<Props> = (props) => {
           ref={setNodeRef}
           {...attributes}
           {...listeners}
-          className={`${match ? 'bg-primary' : 'hover:bg-primary/30'} ${isDragging ? `${disableAnimations ? '' : 'scale-[0.95] tap-highlight-transparent'}` : ''}`}
+          className={`${match ? 'bg-primary' : 'hover:bg-primary/30'} ${disableAnimations ? '' : `motion-reduce:transition-transform-background ${isDragging  ? 'scale-[0.95] tap-highlight-transparent' : ''}`}`}
         >
           <CardBody className="pb-1 pt-0 px-0">
             <div className="flex justify-between">
@@ -293,9 +303,9 @@ const drawSvg = async (
   if (upload === currentUploadRef.current && download === currentDownloadRef.current) return
   currentUploadRef.current = upload
   currentDownloadRef.current = download
-  const svg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 36"><image height="36" width="36" href="${trayIconBase64}"/><text x="140" y="15" font-size="18" font-family="PingFang SC" font-weight="bold" text-anchor="end">${calcTraffic(upload)}/s</text><text x="140" y="34" font-size="18" font-family="PingFang SC" font-weight="bold" text-anchor="end">${calcTraffic(download)}/s</text></svg>`
+  const svg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 156 36"><image height="36" width="36" href="${trayIconBase64}"/><text x="156" y="15" font-size="18" font-family="PingFang SC" font-weight="bold" text-anchor="end" fill="black">${calcTraffic(upload)}/s</text><text x="156" y="34" font-size="18" font-family="PingFang SC" font-weight="bold" text-anchor="end" fill="black">${calcTraffic(download)}/s</text></svg>`
   const image = await loadImage(svg)
-  window.electron.ipcRenderer.send('trayIconUpdate', image)
+  window.electron.ipcRenderer.send('trayIconUpdate', image, true)
 }
 
 const loadImage = (url: string): Promise<string> => {

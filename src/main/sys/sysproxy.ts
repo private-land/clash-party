@@ -1,11 +1,11 @@
-import { triggerAutoProxy, triggerManualProxy } from 'sysproxy-rs'
-import { getAppConfig, getControledMihomoConfig } from '../config'
-import { pacPort, startPacServer, stopPacServer } from '../resolve/server'
 import { promisify } from 'util'
 import { exec } from 'child_process'
+import fs from 'fs'
+import { triggerAutoProxy, triggerManualProxy } from 'sysproxy-rs'
 import { net } from 'electron'
 import axios from 'axios'
-import fs from 'fs'
+import { getAppConfig, getControledMihomoConfig } from '../config'
+import { pacPort, startPacServer, stopPacServer } from '../resolve/server'
 import { proxyLogger } from '../utils/logger'
 
 let triggerSysProxyTimer: NodeJS.Timeout | null = null
@@ -97,10 +97,15 @@ async function enableSysProxy(): Promise<void> {
     }
   } else {
     // Windows / Linux 直接使用 sysproxy-rs
-    if (mode === 'auto') {
-      triggerAutoProxy(true, `http://${proxyHost}:${pacPort}/pac`)
-    } else {
-      triggerManualProxy(true, proxyHost, port, bypass.join(','))
+    try {
+      if (mode === 'auto') {
+        triggerAutoProxy(true, `http://${proxyHost}:${pacPort}/pac`)
+      } else {
+        triggerManualProxy(true, proxyHost, port, bypass.join(','))
+      }
+    } catch (error) {
+      await proxyLogger.error('Failed to enable system proxy', error)
+      throw error
     }
   }
 }
@@ -109,13 +114,16 @@ async function disableSysProxy(): Promise<void> {
   await stopPacServer()
 
   if (process.platform === 'darwin') {
-    await helperRequest(() =>
-      axios.get('http://localhost/off', { socketPath: helperSocketPath })
-    )
+    await helperRequest(() => axios.get('http://localhost/off', { socketPath: helperSocketPath }))
   } else {
     // Windows / Linux 直接使用 sysproxy-rs
-    triggerAutoProxy(false, '')
-    triggerManualProxy(false, '', 0, '')
+    try {
+      triggerAutoProxy(false, '')
+      triggerManualProxy(false, '', 0, '')
+    } catch (error) {
+      await proxyLogger.error('Failed to disable system proxy', error)
+      throw error
+    }
   }
 }
 

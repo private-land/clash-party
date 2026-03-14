@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import SettingCard from '../base/base-setting-card'
 import { toast } from '@renderer/components/base/toast'
-import SettingItem from '../base/base-setting-item'
 import { Button, Input, Select, SelectItem, Switch, Tab, Tabs, Tooltip } from '@heroui/react'
 import { BiCopy, BiSolidFileImport } from 'react-icons/bi'
 import useSWR from 'swr'
@@ -30,9 +28,11 @@ import { platform } from '@renderer/utils/init'
 import { useTheme } from 'next-themes'
 import { IoIosHelpCircle, IoMdCloudDownload } from 'react-icons/io'
 import { MdEditDocument } from 'react-icons/md'
-import CSSEditorModal from './css-editor-modal'
 import { useTranslation } from 'react-i18next'
+import SettingItem from '../base/base-setting-item'
+import SettingCard from '../base/base-setting-card'
 import BaseConfirmModal from '../base/base-confirm-modal'
+import CSSEditorModal from './css-editor-modal'
 
 const GeneralConfig: React.FC = () => {
   const { t, i18n } = useTranslation()
@@ -249,7 +249,7 @@ const GeneralConfig: React.FC = () => {
             onSelectionChange={async (v) => {
               try {
                 await patchAppConfig({
-                  envType: Array.from(v) as ('bash' | 'cmd' | 'powershell')[]
+                  envType: Array.from(v) as ('bash' | 'cmd' | 'powershell' | 'fish' | 'nushell')[]
                 })
               } catch (e) {
                 toast.error(String(e))
@@ -259,6 +259,8 @@ const GeneralConfig: React.FC = () => {
             <SelectItem key="bash">Bash</SelectItem>
             <SelectItem key="cmd">CMD</SelectItem>
             <SelectItem key="powershell">PowerShell</SelectItem>
+            <SelectItem key="fish">Fish</SelectItem>
+            <SelectItem key="nushell">Nushell</SelectItem>
           </Select>
         </SettingItem>
         <SettingItem title={t('settings.showFloatingWindow')} divider>

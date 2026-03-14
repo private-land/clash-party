@@ -7,6 +7,7 @@ const validInvokeChannels = [
   'mihomoCloseConnection',
   'mihomoCloseAllConnections',
   'mihomoRules',
+  'mihomoRulesDisable',
   'mihomoProxies',
   'mihomoGroups',
   'mihomoProxyProviders',
@@ -146,6 +147,8 @@ const validInvokeChannels = [
   // Misc
   'getGistUrl',
   'getImageDataURL',
+  'getIconDataURL',
+  'getAppName',
   'changeLanguage'
 ] as const
 
@@ -192,7 +195,7 @@ const electronAPI = {
         if (!listenerMap.has(channel)) {
           listenerMap.set(channel, new Set())
         }
-        listenerMap.get(channel)!.add(listener)
+        listenerMap.get(channel)?.add(listener)
         ipcRenderer.on(channel, listener)
       }
     },

@@ -3,7 +3,7 @@ import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-c
 import BorderSwitch from '@renderer/components/base/border-swtich'
 import { TbDeviceIpadHorizontalBolt } from 'react-icons/tb'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { restartCore, updateTrayIcon, updateTrayIconImmediate } from '@renderer/utils/ipc'
+import { restartCore, updateTrayIconImmediate } from '@renderer/utils/ipc'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import React from 'react'
@@ -99,7 +99,6 @@ const TunSwitcher: React.FC<Props> = (props) => {
     await restartCore()
     window.electron.ipcRenderer.send('updateFloatingWindow')
     window.electron.ipcRenderer.send('updateTrayMenu')
-    await updateTrayIcon()
   }
 
   if (iconOnly) {
@@ -137,7 +136,7 @@ const TunSwitcher: React.FC<Props> = (props) => {
         ref={setNodeRef}
         {...attributes}
         {...listeners}
-        className={`${match ? 'bg-primary' : 'hover:bg-primary/30'} ${isDragging ? `${disableAnimations ? '' : 'scale-[0.95] tap-highlight-transparent'}` : ''}`}
+        className={`${match ? 'bg-primary' : 'hover:bg-primary/30'} ${disableAnimations ? '' : `motion-reduce:transition-transform-background ${isDragging ? 'scale-[0.95] tap-highlight-transparent' : ''}`}`}
       >
         <CardBody className="pb-1 pt-0 px-0">
           <div className="flex justify-between">

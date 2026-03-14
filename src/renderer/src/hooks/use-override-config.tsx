@@ -1,7 +1,6 @@
 import React, { ReactNode, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { showError } from '@renderer/utils/error-display'
-import { createConfigContext } from './create-config-context'
 import {
   getOverrideConfig,
   setOverrideConfig as set,
@@ -9,6 +8,7 @@ import {
   removeOverrideItem as remove,
   updateOverrideItem as update
 } from '@renderer/utils/ipc'
+import { createConfigContext } from './create-config-context'
 
 const { Provider, useConfig } = createConfigContext<IOverrideConfig>({
   swrKey: 'getOverrideConfig',
@@ -53,12 +53,14 @@ const OverrideConfigContextWrapper: React.FC<{ children: ReactNode }> = ({ child
   )
 
   const setOverrideConfig = useCallback(
-    (cfg: IOverrideConfig) => withErrorHandling(() => set(cfg), 'common.error.saveOverrideConfigFailed')(),
+    (cfg: IOverrideConfig) =>
+      withErrorHandling(() => set(cfg), 'common.error.saveOverrideConfigFailed')(),
     [withErrorHandling]
   )
 
   const addOverrideItem = useCallback(
-    (item: Partial<IOverrideItem>) => withErrorHandling(() => add(item), 'common.error.addOverrideFailed')(),
+    (item: Partial<IOverrideItem>) =>
+      withErrorHandling(() => add(item), 'common.error.addOverrideFailed')(),
     [withErrorHandling]
   )
 
@@ -68,7 +70,8 @@ const OverrideConfigContextWrapper: React.FC<{ children: ReactNode }> = ({ child
   )
 
   const updateOverrideItem = useCallback(
-    (item: IOverrideItem) => withErrorHandling(() => update(item), 'common.error.updateOverrideFailed')(),
+    (item: IOverrideItem) =>
+      withErrorHandling(() => update(item), 'common.error.updateOverrideFailed')(),
     [withErrorHandling]
   )
 

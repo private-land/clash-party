@@ -27,10 +27,38 @@ import React, {
 import { getProfileStr, setRuleStr, getRuleStr } from '@renderer/utils/ipc'
 import { useTranslation } from 'react-i18next'
 import yaml from 'js-yaml'
+import { Virtuoso } from 'react-virtuoso'
 import { IoMdTrash, IoMdArrowUp, IoMdArrowDown, IoMdUndo } from 'react-icons/io'
 import { MdVerticalAlignTop, MdVerticalAlignBottom } from 'react-icons/md'
 import { platform } from '@renderer/utils/init'
 import { toast } from '@renderer/components/base/toast'
+import {
+  domainValidator,
+  domainSuffixValidator,
+  domainKeywordValidator,
+  domainRegexValidator,
+  domainWildcardValidator,
+  geositeValidator,
+  geoipValidator,
+  asnValidator,
+  uidValidator,
+  dscpValidator,
+  networkValidator,
+  processPathValidator,
+  processPathWildcardValidator,
+  processPathRegexValidator,
+  processNameValidator,
+  processNameWildcardValidator,
+  processNameRegexValidator,
+  inTypeValidator,
+  inUserValidator,
+  inNameValidator,
+  ruleSetValidator,
+  logicRuleValidator,
+  subRuleValidator,
+  portRangeValidator,
+  ipCIDRValidator
+} from '@renderer/utils/validate'
 
 interface Props {
   id: string
@@ -43,53 +71,6 @@ interface RuleItem {
   proxy: string
   additionalParams?: string[]
   offset?: number
-}
-
-const domainValidator = (value: string): boolean => {
-  if (value.length > 253 || value.length < 2) return false
-
-  return (
-    new RegExp('^(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)\\.)+[a-zA-Z]{2,}$').test(
-      value
-    ) || ['localhost', 'local', 'localdomain'].includes(value.toLowerCase())
-  )
-}
-
-const domainSuffixValidator = (value: string): boolean => {
-  return new RegExp(
-    '^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.[a-zA-Z]{2,}$'
-  ).test(value)
-}
-
-const domainKeywordValidator = (value: string): boolean => {
-  return value.length > 0 && !value.includes(',') && !value.includes(' ')
-}
-
-const domainRegexValidator = (value: string): boolean => {
-  try {
-    new RegExp(value)
-    return true
-  } catch {
-    return false
-  }
-}
-
-const portValidator = (value: string): boolean => {
-  return new RegExp(
-    '^(?:[1-9]\\d{0,3}|[1-5]\\d{4}|6[0-4]\\d{3}|65[0-4]\\d{2}|655[0-2]\\d|6553[0-5])$'
-  ).test(value)
-}
-
-const ipv4CIDRValidator = (value: string): boolean => {
-  return new RegExp(
-    '^(?:(?:[1-9]?[0-9]|1[0-9][0-9]|2(?:[0-4][0-9]|5[0-5]))\\.){3}(?:[1-9]?[0-9]|1[0-9][0-9]|2(?:[0-4][0-9]|5[0-5]))(?:\\/(?:[12]?[0-9]|3[0-2]))$'
-  ).test(value)
-}
-
-const ipv6CIDRValidator = (value: string): boolean => {
-  return new RegExp(
-    '^([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}|::|:(?::[0-9a-fA-F]{1,4}){1,6}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,5}|(?:[0-9a-fA-F]{1,4}:){2}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){3}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){4}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){5}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,6}:)\\/(?:12[0-8]|1[01][0-9]|[1-9]?[0-9])$'
-  ).test(value)
 }
 
 // 内置路由规则 https://wiki.metacubex.one/config/rules/
@@ -137,10 +118,19 @@ const ruleDefinitionsMap = new Map<
     }
   ],
   [
+    'DOMAIN-WILDCARD',
+    {
+      name: 'DOMAIN-WILDCARD',
+      example: '*.google.com',
+      validator: (value) => domainWildcardValidator(value)
+    }
+  ],
+  [
     'GEOSITE',
     {
       name: 'GEOSITE',
-      example: 'youtube'
+      example: 'youtube',
+      validator: (value) => geositeValidator(value)
     }
   ],
   [
@@ -149,14 +139,16 @@ const ruleDefinitionsMap = new Map<
       name: 'GEOIP',
       example: 'CN',
       noResolve: true,
-      src: true
+      src: true,
+      validator: (value) => geoipValidator(value)
     }
   ],
   [
     'SRC-GEOIP',
     {
       name: 'SRC-GEOIP',
-      example: 'CN'
+      example: 'CN',
+      validator: (value) => geoipValidator(value)
     }
   ],
   [
@@ -166,7 +158,7 @@ const ruleDefinitionsMap = new Map<
       example: '13335',
       noResolve: true,
       src: true,
-      validator: (value) => (+value ? true : false)
+      validator: (value) => asnValidator(value)
     }
   ],
   [
@@ -174,7 +166,7 @@ const ruleDefinitionsMap = new Map<
     {
       name: 'SRC-IP-ASN',
       example: '9808',
-      validator: (value) => (+value ? true : false)
+      validator: (value) => asnValidator(value)
     }
   ],
   [
@@ -184,7 +176,7 @@ const ruleDefinitionsMap = new Map<
       example: '127.0.0.0/8',
       noResolve: true,
       src: true,
-      validator: (value) => ipv4CIDRValidator(value) || ipv6CIDRValidator(value)
+      validator: (value) => ipCIDRValidator(value)
     }
   ],
   [
@@ -194,7 +186,7 @@ const ruleDefinitionsMap = new Map<
       example: '2620:0:2d0:200::7/32',
       noResolve: true,
       src: true,
-      validator: (value) => ipv4CIDRValidator(value) || ipv6CIDRValidator(value)
+      validator: (value) => ipCIDRValidator(value)
     }
   ],
   [
@@ -202,7 +194,7 @@ const ruleDefinitionsMap = new Map<
     {
       name: 'SRC-IP-CIDR',
       example: '192.168.1.201/32',
-      validator: (value) => ipv4CIDRValidator(value) || ipv6CIDRValidator(value)
+      validator: (value) => ipCIDRValidator(value)
     }
   ],
   [
@@ -212,7 +204,7 @@ const ruleDefinitionsMap = new Map<
       example: '8.8.8.8/24',
       noResolve: true,
       src: true,
-      validator: (value) => ipv4CIDRValidator(value) || ipv6CIDRValidator(value)
+      validator: (value) => ipCIDRValidator(value)
     }
   ],
   [
@@ -220,7 +212,7 @@ const ruleDefinitionsMap = new Map<
     {
       name: 'SRC-IP-SUFFIX',
       example: '192.168.1.201/8',
-      validator: (value) => ipv4CIDRValidator(value) || ipv6CIDRValidator(value)
+      validator: (value) => ipCIDRValidator(value)
     }
   ],
   [
@@ -228,7 +220,7 @@ const ruleDefinitionsMap = new Map<
     {
       name: 'SRC-PORT',
       example: '7777',
-      validator: (value) => portValidator(value)
+      validator: (value) => portRangeValidator(value)
     }
   ],
   [
@@ -236,7 +228,7 @@ const ruleDefinitionsMap = new Map<
     {
       name: 'DST-PORT',
       example: '80',
-      validator: (value) => portValidator(value)
+      validator: (value) => portRangeValidator(value)
     }
   ],
   [
@@ -244,21 +236,23 @@ const ruleDefinitionsMap = new Map<
     {
       name: 'IN-PORT',
       example: '7897',
-      validator: (value) => portValidator(value)
+      validator: (value) => portRangeValidator(value)
     }
   ],
   [
     'DSCP',
     {
       name: 'DSCP',
-      example: '4'
+      example: '4',
+      validator: (value) => dscpValidator(value)
     }
   ],
   [
     'PROCESS-NAME',
     {
       name: 'PROCESS-NAME',
-      example: platform === 'win32' ? 'chrome.exe' : 'curl'
+      example: platform === 'win32' ? 'chrome.exe' : 'curl',
+      validator: (value) => processNameValidator(value)
     }
   ],
   [
@@ -268,21 +262,40 @@ const ruleDefinitionsMap = new Map<
       example:
         platform === 'win32'
           ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-          : '/usr/bin/wget'
+          : '/usr/bin/wget',
+      validator: (value) => processPathValidator(value)
+    }
+  ],
+  [
+    'PROCESS-NAME-WILDCARD',
+    {
+      name: 'PROCESS-NAME-WILDCARD',
+      example: '*telegram*',
+      validator: (value) => processNameWildcardValidator(value)
     }
   ],
   [
     'PROCESS-NAME-REGEX',
     {
       name: 'PROCESS-NAME-REGEX',
-      example: '.*telegram.*'
+      example: '.*telegram.*',
+      validator: (value) => processNameRegexValidator(value)
+    }
+  ],
+  [
+    'PROCESS-PATH-WILDCARD',
+    {
+      name: 'PROCESS-PATH-WILDCARD',
+      example: platform === 'win32' ? '*\\chrome.exe' : '/usr/*/wget',
+      validator: (value) => processPathWildcardValidator(value)
     }
   ],
   [
     'PROCESS-PATH-REGEX',
     {
       name: 'PROCESS-PATH-REGEX',
-      example: platform === 'win32' ? '(?i).*Application\\chrome.*' : '.*bin/wget'
+      example: platform === 'win32' ? '(?i).*Application\\\\chrome.*' : '.*bin/wget',
+      validator: (value) => processPathRegexValidator(value)
     }
   ],
   [
@@ -290,7 +303,7 @@ const ruleDefinitionsMap = new Map<
     {
       name: 'NETWORK',
       example: 'udp',
-      validator: (value) => ['tcp', 'udp'].includes(value)
+      validator: (value) => networkValidator(value)
     }
   ],
   [
@@ -298,35 +311,39 @@ const ruleDefinitionsMap = new Map<
     {
       name: 'UID',
       example: '1001',
-      validator: (value) => (+value ? true : false)
+      validator: (value) => uidValidator(value)
     }
   ],
   [
     'IN-TYPE',
     {
       name: 'IN-TYPE',
-      example: 'SOCKS/HTTP'
+      example: 'SOCKS/HTTP',
+      validator: (value) => inTypeValidator(value)
     }
   ],
   [
     'IN-USER',
     {
       name: 'IN-USER',
-      example: 'mihomo'
+      example: 'mihomo',
+      validator: (value) => inUserValidator(value)
     }
   ],
   [
     'IN-NAME',
     {
       name: 'IN-NAME',
-      example: 'ss'
+      example: 'ss',
+      validator: (value) => inNameValidator(value)
     }
   ],
   [
     'SUB-RULE',
     {
       name: 'SUB-RULE',
-      example: '(NETWORK,tcp)'
+      example: '(NETWORK,tcp)',
+      validator: (value) => subRuleValidator(value)
     }
   ],
   [
@@ -335,28 +352,32 @@ const ruleDefinitionsMap = new Map<
       name: 'RULE-SET',
       example: 'providername',
       noResolve: true,
-      src: true
+      src: true,
+      validator: (value) => ruleSetValidator(value)
     }
   ],
   [
     'AND',
     {
       name: 'AND',
-      example: '((DOMAIN,baidu.com),(NETWORK,UDP))'
+      example: '((DOMAIN,baidu.com),(NETWORK,UDP))',
+      validator: (value) => logicRuleValidator(value)
     }
   ],
   [
     'OR',
     {
       name: 'OR',
-      example: '((NETWORK,UDP),(DOMAIN,baidu.com))'
+      example: '((NETWORK,UDP),(DOMAIN,baidu.com))',
+      validator: (value) => logicRuleValidator(value)
     }
   ],
   [
     'NOT',
     {
       name: 'NOT',
-      example: '((DOMAIN,baidu.com))'
+      example: '((DOMAIN,baidu.com))',
+      validator: (value) => logicRuleValidator(value)
     }
   ],
   [
@@ -558,188 +579,266 @@ const EditRulesModal: React.FC<Props> = (props) => {
 
   const deferredFilteredRules = useDeferredValue(filteredRules)
 
-  const getContent = async (): Promise<void> => {
-    setIsLoading(true)
-    try {
-      const content = await getProfileStr(id)
-      setProfileContent(content)
+  // 解析规则字符串
+  const parseRuleString = useCallback((ruleStr: string): RuleItem => {
+    const parts = ruleStr.split(',')
+    const firstPartIsNumber =
+      !isNaN(Number(parts[0])) && parts[0].trim() !== '' && parts.length >= 3
 
-      const parsed = yaml.load(content) as Record<string, unknown> | undefined
-      let initialRules: RuleItem[] = []
+    let offset = 0
+    let ruleParts = parts
 
-      if (parsed && parsed.rules && Array.isArray(parsed.rules)) {
-        initialRules = parsed.rules.map((rule: string) => {
-          const parts = rule.split(',')
-          if (parts[0] === 'MATCH') {
-            return {
-              type: 'MATCH',
-              payload: '',
-              proxy: parts[1]
-            }
+    if (firstPartIsNumber) {
+      offset = parseInt(parts[0])
+      ruleParts = parts.slice(1)
+    }
+
+    if (ruleParts[0] === 'MATCH') {
+      return {
+        type: 'MATCH',
+        payload: '',
+        proxy: ruleParts[1],
+        offset: offset > 0 ? offset : undefined
+      }
+    } else {
+      const additionalParams = ruleParts.slice(3).filter((param) => param.trim() !== '') || []
+      return {
+        type: ruleParts[0],
+        payload: ruleParts[1],
+        proxy: ruleParts[2],
+        additionalParams,
+        offset: offset > 0 ? offset : undefined
+      }
+    }
+  }, [])
+
+  // 处理前置规则位置
+  const processRulesWithPositions = useCallback(
+    (
+      rulesToProcess: RuleItem[],
+      allRules: RuleItem[],
+      positionCalculator: (rule: RuleItem, currentRules: RuleItem[]) => number
+    ): { updatedRules: RuleItem[]; ruleIndices: Set<number> } => {
+      const updatedRules = [...allRules]
+      const ruleIndices = new Set<number>()
+
+      rulesToProcess.forEach((rule) => {
+        const targetPosition = positionCalculator(rule, updatedRules)
+        const actualPosition = Math.min(targetPosition, updatedRules.length)
+        updatedRules.splice(actualPosition, 0, rule)
+
+        const newRuleIndices = new Set<number>()
+        ruleIndices.forEach((idx) => {
+          if (idx >= actualPosition) {
+            newRuleIndices.add(idx + 1)
           } else {
-            const additionalParams = parts.slice(3).filter((param) => param.trim() !== '') || []
-            return {
-              type: parts[0],
-              payload: parts[1],
-              proxy: parts[2],
-              additionalParams
-            }
+            newRuleIndices.add(idx)
           }
         })
-      }
+        newRuleIndices.add(actualPosition)
 
-      // 提取代理组
-      if (parsed) {
-        const groups: string[] = []
+        ruleIndices.clear()
+        newRuleIndices.forEach((idx) => ruleIndices.add(idx))
+      })
 
-        // 添加代理组和代理名称
-        if (Array.isArray(parsed['proxy-groups'])) {
-          groups.push(
-            ...((parsed['proxy-groups'] as Array<Record<string, unknown>>)
-              .map((group) =>
-                group && typeof group['name'] === 'string' ? (group['name'] as string) : ''
-              )
-              .filter(Boolean) as string[])
-          )
-        }
+      return { updatedRules, ruleIndices }
+    },
+    []
+  )
 
-        if (Array.isArray(parsed['proxies'])) {
-          groups.push(
-            ...((parsed['proxies'] as Array<Record<string, unknown>>)
-              .map((proxy) =>
-                proxy && typeof proxy['name'] === 'string' ? (proxy['name'] as string) : ''
-              )
-              .filter(Boolean) as string[])
-          )
-        }
+  // 处理后置规则位置
+  const processAppendRulesWithPositions = useCallback(
+    (
+      rulesToProcess: RuleItem[],
+      allRules: RuleItem[],
+      positionCalculator: (rule: RuleItem, currentRules: RuleItem[]) => number
+    ): { updatedRules: RuleItem[]; ruleIndices: Set<number> } => {
+      const updatedRules = [...allRules]
+      const ruleIndices = new Set<number>()
 
-        // 预置出站 https://wiki.metacubex.one/config/proxies/built-in/
-        groups.push('DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE')
+      rulesToProcess.forEach((rule) => {
+        const targetPosition = positionCalculator(rule, updatedRules)
+        const actualPosition = Math.min(targetPosition, updatedRules.length)
+        updatedRules.splice(actualPosition, 0, rule)
 
-        // 去重
-        setProxyGroups([...new Set(groups)])
-      }
+        const newRuleIndices = new Set<number>()
+        ruleIndices.forEach((idx) => {
+          if (idx >= actualPosition) {
+            newRuleIndices.add(idx + 1)
+          } else {
+            newRuleIndices.add(idx)
+          }
+        })
+        newRuleIndices.add(actualPosition)
 
-      // 读取规则文件
+        ruleIndices.clear()
+        newRuleIndices.forEach((idx) => ruleIndices.add(idx))
+      })
+
+      return { updatedRules, ruleIndices }
+    },
+    []
+  )
+
+  useEffect(() => {
+    const loadContent = async (): Promise<void> => {
+      setIsLoading(true)
       try {
-        const ruleContent = await getRuleStr(id)
-        const ruleData = yaml.load(ruleContent) as {
-          prepend?: string[]
-          append?: string[]
-          delete?: string[]
+        const content = await getProfileStr(id)
+        setProfileContent(content)
+
+        const parsed = yaml.load(content) as Record<string, unknown> | undefined
+        let initialRules: RuleItem[] = []
+
+        if (parsed && parsed.rules && Array.isArray(parsed.rules)) {
+          initialRules = parsed.rules.map((rule: string) => {
+            const parts = rule.split(',')
+            if (parts[0] === 'MATCH') {
+              return {
+                type: 'MATCH',
+                payload: '',
+                proxy: parts[1]
+              }
+            } else {
+              const additionalParams = parts.slice(3).filter((param) => param.trim() !== '') || []
+              return {
+                type: parts[0],
+                payload: parts[1],
+                proxy: parts[2],
+                additionalParams
+              }
+            }
+          })
         }
 
-        if (ruleData) {
-          let allRules = [...initialRules]
-          const newPrependRules = new Set<number>()
-          const newAppendRules = new Set<number>()
-          const newDeletedRules = new Set<number>()
+        if (parsed) {
+          const groups: string[] = []
 
-          // 处理前置规则
-          if (ruleData.prepend && Array.isArray(ruleData.prepend)) {
-            const prependRules: RuleItem[] = []
-            ruleData.prepend.forEach((ruleStr: string) => {
-              prependRules.push(parseRuleString(ruleStr))
-            })
-
-            // 插入前置规则
-            const { updatedRules, ruleIndices } = processRulesWithPositions(
-              prependRules,
-              allRules,
-              (rule, currentRules) => {
-                if (rule.offset !== undefined && rule.offset < currentRules.length) {
-                  return rule.offset
-                }
-                return 0
-              }
+          if (Array.isArray(parsed['proxy-groups'])) {
+            groups.push(
+              ...((parsed['proxy-groups'] as Array<Record<string, unknown>>)
+                .map((group) =>
+                  group && typeof group['name'] === 'string' ? (group['name'] as string) : ''
+                )
+                .filter(Boolean) as string[])
             )
-
-            allRules = updatedRules
-            ruleIndices.forEach((index) => newPrependRules.add(index))
           }
 
-          // 处理后置规则
-          if (ruleData.append && Array.isArray(ruleData.append)) {
-            const appendRules: RuleItem[] = []
-            ruleData.append.forEach((ruleStr: string) => {
-              appendRules.push(parseRuleString(ruleStr))
-            })
-
-            // 插入后置规则
-            const { updatedRules, ruleIndices } = processAppendRulesWithPositions(
-              appendRules,
-              allRules,
-              (rule, currentRules) => {
-                if (rule.offset !== undefined) {
-                  return Math.max(0, currentRules.length - rule.offset)
-                }
-                return currentRules.length
-              }
+          if (Array.isArray(parsed['proxies'])) {
+            groups.push(
+              ...((parsed['proxies'] as Array<Record<string, unknown>>)
+                .map((proxy) =>
+                  proxy && typeof proxy['name'] === 'string' ? (proxy['name'] as string) : ''
+                )
+                .filter(Boolean) as string[])
             )
-
-            allRules = updatedRules
-
-            // 标记后置规则
-            ruleIndices.forEach((index) => newAppendRules.add(index))
           }
 
-          // 处理删除规则
-          if (ruleData.delete && Array.isArray(ruleData.delete)) {
-            const deleteRules = ruleData.delete.map((ruleStr: string) => {
-              return parseRuleString(ruleStr)
-            })
+          groups.push('DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE')
+          setProxyGroups([...new Set(groups)])
+        }
 
-            // 匹配并标记删除规则
-            deleteRules.forEach((deleteRule) => {
-              const matchedIndex = allRules.findIndex(
-                (rule) =>
-                  rule.type === deleteRule.type &&
-                  rule.payload === deleteRule.payload &&
-                  rule.proxy === deleteRule.proxy &&
-                  JSON.stringify(rule.additionalParams || []) ===
-                    JSON.stringify(deleteRule.additionalParams || [])
+        try {
+          const ruleContent = await getRuleStr(id)
+          const ruleData = yaml.load(ruleContent) as {
+            prepend?: string[]
+            append?: string[]
+            delete?: string[]
+          }
+
+          if (ruleData) {
+            let allRules = [...initialRules]
+            const newPrependRules = new Set<number>()
+            const newAppendRules = new Set<number>()
+            const newDeletedRules = new Set<number>()
+
+            if (ruleData.prepend && Array.isArray(ruleData.prepend)) {
+              const prependRuleItems: RuleItem[] = []
+              ruleData.prepend.forEach((ruleStr: string) => {
+                prependRuleItems.push(parseRuleString(ruleStr))
+              })
+
+              const { updatedRules, ruleIndices } = processRulesWithPositions(
+                prependRuleItems,
+                allRules,
+                (rule, currentRules) => {
+                  if (rule.offset !== undefined && rule.offset < currentRules.length) {
+                    return rule.offset
+                  }
+                  return 0
+                }
               )
 
-              if (matchedIndex !== -1) {
-                newDeletedRules.add(matchedIndex)
-              }
-            })
+              allRules = updatedRules
+              ruleIndices.forEach((index) => newPrependRules.add(index))
+            }
+
+            if (ruleData.append && Array.isArray(ruleData.append)) {
+              const appendRuleItems: RuleItem[] = []
+              ruleData.append.forEach((ruleStr: string) => {
+                appendRuleItems.push(parseRuleString(ruleStr))
+              })
+
+              const { updatedRules, ruleIndices } = processAppendRulesWithPositions(
+                appendRuleItems,
+                allRules,
+                (rule, currentRules) => {
+                  if (rule.offset !== undefined) {
+                    return Math.max(0, currentRules.length - rule.offset)
+                  }
+                  return currentRules.length
+                }
+              )
+
+              allRules = updatedRules
+              ruleIndices.forEach((index) => newAppendRules.add(index))
+            }
+
+            if (ruleData.delete && Array.isArray(ruleData.delete)) {
+              const deleteRules = ruleData.delete.map((ruleStr: string) => {
+                return parseRuleString(ruleStr)
+              })
+
+              deleteRules.forEach((deleteRule) => {
+                const matchedIndex = allRules.findIndex(
+                  (rule) =>
+                    rule.type === deleteRule.type &&
+                    rule.payload === deleteRule.payload &&
+                    rule.proxy === deleteRule.proxy &&
+                    JSON.stringify(rule.additionalParams || []) ===
+                      JSON.stringify(deleteRule.additionalParams || [])
+                )
+
+                if (matchedIndex !== -1) {
+                  newDeletedRules.add(matchedIndex)
+                }
+              })
+            }
+
+            setPrependRules(newPrependRules)
+            setAppendRules(newAppendRules)
+            setDeletedRules(newDeletedRules)
+            setRules(allRules)
+          } else {
+            setRules(initialRules)
+            setPrependRules(new Set())
+            setAppendRules(new Set())
+            setDeletedRules(new Set())
           }
-
-          // 更新状态
-          setPrependRules(newPrependRules)
-          setAppendRules(newAppendRules)
-          setDeletedRules(newDeletedRules)
-
-          // 设置规则列表
-          setRules(allRules)
-        } else {
-          // 使用初始规则
+        } catch {
           setRules(initialRules)
-          // 清空规则标记
           setPrependRules(new Set())
           setAppendRules(new Set())
           setDeletedRules(new Set())
         }
-      } catch (ruleError) {
-        // 规则文件读取失败
-        console.debug('规则文件读取失败：', ruleError)
-        setRules(initialRules)
-        // 清空规则标记
-        setPrependRules(new Set())
-        setAppendRules(new Set())
-        setDeletedRules(new Set())
+      } catch {
+        // 解析配置文件失败，静默处理
+      } finally {
+        setIsLoading(false)
       }
-    } catch (e) {
-      console.error('Failed to parse profile content', e)
-    } finally {
-      setIsLoading(false)
     }
-  }
-
-  useEffect(() => {
-    getContent()
-  }, [])
+    loadContent()
+  }, [id, parseRuleString, processRulesWithPositions, processAppendRulesWithPositions])
 
   const validateRulePayload = useCallback((ruleType: string, payload: string): boolean => {
     if (ruleType === 'MATCH') {
@@ -843,6 +942,58 @@ const EditRulesModal: React.FC<Props> = (props) => {
     })
   }
 
+  // 计算插入位置的索引
+  const getUpdatedIndexForInsertion = (index: number, insertPosition: number): number => {
+    if (index >= insertPosition) {
+      return index + 1
+    } else {
+      return index
+    }
+  }
+
+  // 插入规则后更新所有索引
+  const updateAllRuleIndicesAfterInsertion = useCallback(
+    (
+      currentPrependRules: Set<number>,
+      currentAppendRules: Set<number>,
+      currentDeletedRules: Set<number>,
+      insertPosition: number,
+      isNewPrependRule: boolean = false,
+      isNewAppendRule: boolean = false
+    ): {
+      newPrependRules: Set<number>
+      newAppendRules: Set<number>
+      newDeletedRules: Set<number>
+    } => {
+      const newPrependRules = new Set<number>()
+      const newAppendRules = new Set<number>()
+      const newDeletedRules = new Set<number>()
+
+      currentPrependRules.forEach((idx) => {
+        newPrependRules.add(getUpdatedIndexForInsertion(idx, insertPosition))
+      })
+
+      currentAppendRules.forEach((idx) => {
+        newAppendRules.add(getUpdatedIndexForInsertion(idx, insertPosition))
+      })
+
+      currentDeletedRules.forEach((idx) => {
+        newDeletedRules.add(getUpdatedIndexForInsertion(idx, insertPosition))
+      })
+
+      if (isNewPrependRule) {
+        newPrependRules.add(insertPosition)
+      }
+
+      if (isNewAppendRule) {
+        newAppendRules.add(insertPosition)
+      }
+
+      return { newPrependRules, newAppendRules, newDeletedRules }
+    },
+    []
+  )
+
   const handleAddRule = useCallback(
     (position: 'prepend' | 'append' = 'append'): void => {
       if (!(newRule.type === 'MATCH' || newRule.payload.trim() !== '')) {
@@ -917,7 +1068,16 @@ const EditRulesModal: React.FC<Props> = (props) => {
       })
       setNewRule({ type: 'DOMAIN', payload: '', proxy: 'DIRECT', additionalParams: [] })
     },
-    [newRule, rules, prependRules, appendRules, deletedRules, validateRulePayload, t]
+    [
+      newRule,
+      rules,
+      prependRules,
+      appendRules,
+      deletedRules,
+      validateRulePayload,
+      t,
+      updateAllRuleIndicesAfterInsertion
+    ]
   )
 
   const handleRemoveRule = useCallback((index: number): void => {
@@ -1002,126 +1162,6 @@ const EditRulesModal: React.FC<Props> = (props) => {
     [rules, prependRules, appendRules]
   )
 
-  // 解析规则字符串
-  const parseRuleString = (ruleStr: string): RuleItem => {
-    const parts = ruleStr.split(',')
-    const firstPartIsNumber =
-      !isNaN(Number(parts[0])) && parts[0].trim() !== '' && parts.length >= 3
-
-    let offset = 0
-    let ruleParts = parts
-
-    if (firstPartIsNumber) {
-      offset = parseInt(parts[0])
-      ruleParts = parts.slice(1)
-    }
-
-    if (ruleParts[0] === 'MATCH') {
-      return {
-        type: 'MATCH',
-        payload: '',
-        proxy: ruleParts[1],
-        offset: offset > 0 ? offset : undefined
-      }
-    } else {
-      const additionalParams = ruleParts.slice(3).filter((param) => param.trim() !== '') || []
-      return {
-        type: ruleParts[0],
-        payload: ruleParts[1],
-        proxy: ruleParts[2],
-        additionalParams,
-        offset: offset > 0 ? offset : undefined
-      }
-    }
-  }
-
-  // 规则转字符串
-  const convertRuleToString = (rule: RuleItem): string => {
-    const parts = [rule.type]
-    if (rule.payload) parts.push(rule.payload)
-    if (rule.proxy) parts.push(rule.proxy)
-    if (rule.additionalParams && rule.additionalParams.length > 0) {
-      parts.push(...rule.additionalParams)
-    }
-
-    // 添加偏移量
-    if (rule.offset !== undefined && rule.offset > 0) {
-      parts.unshift(rule.offset.toString())
-    }
-
-    return parts.join(',')
-  }
-
-  // 处理前置规则位置
-  const processRulesWithPositions = (
-    rules: RuleItem[],
-    allRules: RuleItem[],
-    positionCalculator: (rule: RuleItem, currentRules: RuleItem[]) => number
-  ): { updatedRules: RuleItem[]; ruleIndices: Set<number> } => {
-    const updatedRules = [...allRules]
-    const ruleIndices = new Set<number>()
-
-    // 按顺序处理规则
-    rules.forEach((rule) => {
-      const targetPosition = positionCalculator(rule, updatedRules)
-      const actualPosition = Math.min(targetPosition, updatedRules.length)
-      updatedRules.splice(actualPosition, 0, rule)
-
-      // 更新索引
-      const newRuleIndices = new Set<number>()
-      ruleIndices.forEach((idx) => {
-        if (idx >= actualPosition) {
-          newRuleIndices.add(idx + 1)
-        } else {
-          newRuleIndices.add(idx)
-        }
-      })
-      // 添加当前规则索引
-      newRuleIndices.add(actualPosition)
-
-      // 更新索引集合
-      ruleIndices.clear()
-      newRuleIndices.forEach((idx) => ruleIndices.add(idx))
-    })
-
-    return { updatedRules, ruleIndices }
-  }
-
-  // 处理后置规则位置
-  const processAppendRulesWithPositions = (
-    rules: RuleItem[],
-    allRules: RuleItem[],
-    positionCalculator: (rule: RuleItem, currentRules: RuleItem[]) => number
-  ): { updatedRules: RuleItem[]; ruleIndices: Set<number> } => {
-    const updatedRules = [...allRules]
-    const ruleIndices = new Set<number>()
-
-    // 按顺序处理规则
-    rules.forEach((rule) => {
-      const targetPosition = positionCalculator(rule, updatedRules)
-      const actualPosition = Math.min(targetPosition, updatedRules.length)
-      updatedRules.splice(actualPosition, 0, rule)
-
-      // 更新索引
-      const newRuleIndices = new Set<number>()
-      ruleIndices.forEach((idx) => {
-        if (idx >= actualPosition) {
-          newRuleIndices.add(idx + 1)
-        } else {
-          newRuleIndices.add(idx)
-        }
-      })
-      // 添加当前规则索引
-      newRuleIndices.add(actualPosition)
-
-      // 更新索引集合
-      ruleIndices.clear()
-      newRuleIndices.forEach((idx) => ruleIndices.add(idx))
-    })
-
-    return { updatedRules, ruleIndices }
-  }
-
   // 更新规则索引
   const updateRuleIndices = (prev: Set<number>, index1: number, index2: number): Set<number> => {
     const newSet = new Set<number>()
@@ -1137,57 +1177,20 @@ const EditRulesModal: React.FC<Props> = (props) => {
     return newSet
   }
 
-  // 计算插入位置的索引
-  const getUpdatedIndexForInsertion = (index: number, insertPosition: number): number => {
-    if (index >= insertPosition) {
-      return index + 1
-    } else {
-      return index
-    }
-  }
-
-  // 插入规则后更新所有索引
-  const updateAllRuleIndicesAfterInsertion = (
-    prependRules: Set<number>,
-    appendRules: Set<number>,
-    deletedRules: Set<number>,
-    insertPosition: number,
-    isNewPrependRule: boolean = false,
-    isNewAppendRule: boolean = false
-  ): {
-    newPrependRules: Set<number>
-    newAppendRules: Set<number>
-    newDeletedRules: Set<number>
-  } => {
-    const newPrependRules = new Set<number>()
-    const newAppendRules = new Set<number>()
-    const newDeletedRules = new Set<number>()
-
-    // 更新前置规则索引
-    prependRules.forEach((idx) => {
-      newPrependRules.add(getUpdatedIndexForInsertion(idx, insertPosition))
-    })
-
-    // 更新后置规则索引
-    appendRules.forEach((idx) => {
-      newAppendRules.add(getUpdatedIndexForInsertion(idx, insertPosition))
-    })
-
-    // 更新删除规则索引
-    deletedRules.forEach((idx) => {
-      newDeletedRules.add(getUpdatedIndexForInsertion(idx, insertPosition))
-    })
-
-    // 标记新规则
-    if (isNewPrependRule) {
-      newPrependRules.add(insertPosition)
+  // 规则转字符串
+  const convertRuleToString = (rule: RuleItem): string => {
+    const parts = [rule.type]
+    if (rule.payload) parts.push(rule.payload)
+    if (rule.proxy) parts.push(rule.proxy)
+    if (rule.additionalParams && rule.additionalParams.length > 0) {
+      parts.push(...rule.additionalParams)
     }
 
-    if (isNewAppendRule) {
-      newAppendRules.add(insertPosition)
+    if (rule.offset !== undefined && rule.offset > 0) {
+      parts.unshift(rule.offset.toString())
     }
 
-    return { newPrependRules, newAppendRules, newDeletedRules }
+    return parts.join(',')
   }
 
   return (
@@ -1223,21 +1226,17 @@ const EditRulesModal: React.FC<Props> = (props) => {
                     <SelectItem key={type}>{type}</SelectItem>
                   ))}
                 </Select>
-
-                <Input
-                  label={t('profiles.editRules.payload')}
-                  placeholder={
-                    getRuleExample(newRule.type) || t('profiles.editRules.payloadPlaceholder')
-                  }
-                  value={newRule.payload}
-                  onValueChange={(value) => setNewRule({ ...newRule, payload: value })}
-                  isDisabled={newRule.type === 'MATCH'}
-                  color={
-                    newRule.payload && newRule.type !== 'MATCH' && !isPayloadValid
-                      ? 'danger'
-                      : 'default'
-                  }
-                />
+              
+                  <Input
+                    label={t('profiles.editRules.payload')}
+                    placeholder={
+                      getRuleExample(newRule.type) || t('profiles.editRules.payloadPlaceholder')
+                    }
+                    value={newRule.payload}
+                    onValueChange={(value) => setNewRule({ ...newRule, payload: value })}
+                    isDisabled={newRule.type === 'MATCH'}
+                    className={`${newRule.payload && newRule.type !== 'MATCH' && !isPayloadValid ? 'border-red-500 ring-1 ring-red-500 rounded-lg' : ''}`}
+                  />
 
                 <Autocomplete
                   label={t('profiles.editRules.proxy')}
@@ -1326,7 +1325,7 @@ const EditRulesModal: React.FC<Props> = (props) => {
                   onValueChange={setSearchTerm}
                 />
               </div>
-              <div className="flex flex-col gap-2 max-h-[calc(100vh-200px)] overflow-y-auto flex-1">
+              <div className="flex-1 min-h-0">
                 {isLoading ? (
                   <div className="flex items-center justify-center h-full py-8">
                     <Spinner size="lg" label={t('common.loading') || 'Loading...'} />
@@ -1340,26 +1339,34 @@ const EditRulesModal: React.FC<Props> = (props) => {
                         : t('profiles.editRules.noRules')}
                   </div>
                 ) : (
-                  deferredFilteredRules.map((rule, index) => {
-                    const originalIndex = ruleIndexMap.get(rule) ?? -1
-                    const isDeleted = deletedRules.has(originalIndex)
-                    const isPrependOrAppend =
-                      prependRules.has(originalIndex) || appendRules.has(originalIndex)
-
-                    return (
-                      <RuleListItem
-                        key={`${originalIndex}-${index}`}
-                        rule={rule}
-                        originalIndex={originalIndex}
-                        isDeleted={isDeleted}
-                        isPrependOrAppend={isPrependOrAppend}
-                        rulesLength={rules.length}
-                        onMoveUp={handleMoveRuleUp}
-                        onMoveDown={handleMoveRuleDown}
-                        onRemove={handleRemoveRule}
-                      />
-                    )
-                  })
+                  <Virtuoso
+                    style={{ height: '100%' }}
+                    data={deferredFilteredRules}
+                    computeItemKey={(index, rule) => {
+                      const originalIndex = ruleIndexMap.get(rule) ?? -1
+                      return `${originalIndex}-${index}`
+                    }}
+                    itemContent={(index, rule) => {
+                      const originalIndex = ruleIndexMap.get(rule) ?? -1
+                      const isDeleted = deletedRules.has(originalIndex)
+                      const isPrependOrAppend =
+                        prependRules.has(originalIndex) || appendRules.has(originalIndex)
+                      return (
+                        <div className="pb-2">
+                          <RuleListItem
+                            rule={rule}
+                            originalIndex={originalIndex}
+                            isDeleted={isDeleted}
+                            isPrependOrAppend={isPrependOrAppend}
+                            rulesLength={rules.length}
+                            onMoveUp={handleMoveRuleUp}
+                            onMoveDown={handleMoveRuleDown}
+                            onRemove={handleRemoveRule}
+                          />
+                        </div>
+                      )
+                    }}
+                  />
                 )}
               </div>
             </div>

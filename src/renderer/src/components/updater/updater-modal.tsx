@@ -10,8 +10,8 @@ import {
 } from '@heroui/react'
 import { toast } from '@renderer/components/base/toast'
 import ReactMarkdown from 'react-markdown'
-import React, { useEffect, useState } from 'react'
-import { downloadAndInstallUpdate, DownloadProgress } from '@renderer/utils/ipc'
+import React, { useState, useEffect } from 'react'
+import { downloadAndInstallUpdate } from '@renderer/utils/ipc'
 import { useTranslation } from 'react-i18next'
 
 interface Props {
@@ -34,29 +34,18 @@ function formatBytes(bytes: number): string {
 const UpdaterModal: React.FC<Props> = (props) => {
   const { version, changelog, onClose } = props
   const [downloading, setDownloading] = useState(false)
-  const [progress, setProgress] = useState<DownloadProgress | null>(null)
+  const [progress, setProgress] = useState<{ status: 'downloading' | 'verifying'; percent?: number } | null>(null)
   const { t } = useTranslation()
 
   useEffect(() => {
-    const handleProgress = (_e: Electron.IpcRendererEvent, ...args: unknown[]): void => {
-      const p = args[0] as DownloadProgress
-      setProgress(p)
+    const handler = (_e: Electron.IpcRendererEvent, ...args: unknown[]): void => {
+      setProgress(args[0] as { status: 'downloading' | 'verifying'; percent?: number })
     }
-
-    window.electron.ipcRenderer.on('updateDownloadProgress', handleProgress)
-
+    window.electron.ipcRenderer.on('updateDownloadProgress', handler)
     return () => {
-      window.electron.ipcRenderer.removeListener('updateDownloadProgress', handleProgress)
+      window.electron.ipcRenderer.removeListener('updateDownloadProgress', handler)
     }
   }, [])
-
-  const onUpdate = async (): Promise<void> => {
-    try {
-      await downloadAndInstallUpdate(version)
-    } catch (e) {
-      toast.error(String(e))
-    }
-  }
 
   return (
     <Modal
@@ -75,7 +64,7 @@ const UpdaterModal: React.FC<Props> = (props) => {
             size="sm"
             className="flex app-nodrag"
             onPress={() => {
-              open(`https://github.com/mihomo-party-org/mihomo-party/releases/tag/v${version}`)
+              open(`https://github.com/xflash-panda/clash-party/releases/tag/v${version}`)
             }}
           >
             {t('common.updater.goToDownload')}
@@ -95,25 +84,24 @@ const UpdaterModal: React.FC<Props> = (props) => {
             </ReactMarkdown>
           </div>
         </ModalBody>
-        <ModalFooter className="flex-col gap-2">
+        <ModalFooter className="flex-col gap-2 items-stretch">
           {downloading && progress && (
-            <div className="w-full">
-              <Progress
-                size="sm"
-                value={progress.percent >= 0 ? progress.percent : undefined}
-                isIndeterminate={progress.percent < 0}
-                color="primary"
-                className="mb-1"
-              />
-              <div className="text-xs text-default-500 text-center">
-                {progress.total > 0
-                  ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)} (${progress.percent}%)`
-                  : `${formatBytes(progress.downloaded)} ${t('common.updater.downloaded')}`}
+            <div className="flex flex-col gap-1">
+              <div className="w-full bg-default-200 rounded-full h-1.5">
+                <div
+                  className="bg-primary h-1.5 rounded-full transition-all duration-300"
+                  style={{ width: `${progress.status === 'verifying' ? 100 : (progress.percent ?? 0)}%` }}
+                />
               </div>
+              <p className="text-xs text-foreground-400 text-center">
+                {progress.status === 'verifying'
+                  ? t('common.updater.verifying')
+                  : `${progress.percent ?? 0}%`}
+              </p>
             </div>
           )}
-          <div className="flex gap-2 justify-end w-full">
-            <Button size="sm" variant="light" onPress={onClose} isDisabled={downloading}>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="light" onPress={onClose}>
               {t('common.cancel')}
             </Button>
             <Button
@@ -123,11 +111,10 @@ const UpdaterModal: React.FC<Props> = (props) => {
               onPress={async () => {
                 try {
                   setDownloading(true)
-                  setProgress(null)
-                  await onUpdate()
+                  await downloadAndInstallUpdate(version)
                   onClose()
                 } catch (e) {
-                  toast.error(String(e))
+                  toast.detailedError(String(e))
                 } finally {
                   setDownloading(false)
                   setProgress(null)

@@ -15,12 +15,28 @@ const monacoEditorPlugin = isObjectWithDefaultFunction(monacoEditorPluginModule)
   ? monacoEditorPluginModule.default
   : monacoEditorPluginModule
 
+// Win7 build: bundle all deps (Vite converts ESM→CJS), only externalize native modules
+const isLegacyBuild = process.env.LEGACY_BUILD === 'true'
+const legacyExternal = ['sysproxy-rs', 'electron']
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: isLegacyBuild ? [] : [externalizeDepsPlugin()],
+    build: isLegacyBuild
+      ? { rollupOptions: { external: legacyExternal, output: { format: 'cjs' } } }
+      : undefined
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: isLegacyBuild ? [] : [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        external: isLegacyBuild ? legacyExternal : undefined,
+        output: {
+          format: 'cjs',
+          entryFileNames: '[name].cjs'
+        }
+      }
+    }
   },
   renderer: {
     build: {

@@ -15,21 +15,7 @@ export interface RequestOptions {
   responseType?: 'text' | 'json' | 'arraybuffer'
   followRedirect?: boolean
   maxRedirects?: number
-  /** Number of retry attempts for failed requests (default: 0) */
-  retry?: number
-  /** Delay in ms between retries (default: 1000) */
-  retryDelay?: number
-  /** Callback for download progress */
-  onProgress?: (progress: DownloadProgress) => void
-}
-
-export interface DownloadProgress {
-  /** Bytes downloaded so far */
-  downloaded: number
-  /** Total bytes (may be 0 if content-length unknown) */
-  total: number
-  /** Download percentage (0-100, or -1 if total unknown) */
-  percent: number
+  onProgress?: (loaded: number, total: number) => void
 }
 
 export interface Response<T = unknown> {
@@ -38,6 +24,25 @@ export interface Response<T = unknown> {
   statusText: string
   headers: Record<string, string>
   url: string
+}
+
+// 复用单个 session 用于代理请求
+let proxySession: Electron.Session | null = null
+let currentProxyUrl: string | null = null
+let proxySetupPromise: Promise<void> | null = null
+
+async function getProxySession(proxyUrl: string): Promise<Electron.Session> {
+  if (!proxySession) {
+    proxySession = session.fromPartition('proxy-requests', { cache: false })
+  }
+  if (currentProxyUrl !== proxyUrl) {
+    proxySetupPromise = proxySession.setProxy({ proxyRules: proxyUrl })
+    currentProxyUrl = proxyUrl
+  }
+  if (proxySetupPromise) {
+    await proxySetupPromise
+  }
+  return proxySession
 }
 
 /**
@@ -65,28 +70,17 @@ async function requestOnce<T = unknown>(
   } = options
 
   return new Promise((resolve, reject) => {
-    let sessionToUse: Electron.Session | undefined = session.defaultSession
-    let tempPartition: string | null = null
+    let sessionToUse: Electron.Session = session.defaultSession
 
     // Set up proxy if specified
     const setupProxy = async (): Promise<void> => {
       if (proxy) {
-        // Create temporary session partition to avoid affecting global proxy settings
-        tempPartition = `temp-request-${Date.now()}-${Math.random()}`
-        sessionToUse = session.fromPartition(tempPartition, { cache: false })
         const proxyUrl = `${proxy.protocol}://${proxy.host}:${proxy.port}`
-        await sessionToUse.setProxy({ proxyRules: proxyUrl })
+        sessionToUse = await getProxySession(proxyUrl)
       }
     }
 
-    const cleanup = (): void => {
-      // Cleanup temporary session if created
-      if (tempPartition) {
-        // Note: Electron doesn't provide session.destroy(), but temporary sessions
-        // will be garbage collected when no longer referenced
-        sessionToUse = undefined
-      }
-    }
+    const cleanup = (): void => {}
 
     setupProxy()
       .then(() => {
@@ -115,8 +109,6 @@ async function requestOnce<T = unknown>(
 
         const chunks: Buffer[] = []
         let redirectCount = 0
-        let downloaded = 0
-        let totalSize = 0
 
         req.on('redirect', () => {
           redirectCount++
@@ -138,17 +130,14 @@ async function requestOnce<T = unknown>(
             responseHeaders[rawHeaders[i].toLowerCase()] = rawHeaders[i + 1]
           }
 
-          // Get content length for progress tracking
-          totalSize = parseInt(responseHeaders['content-length'] || '0', 10)
+          const totalSize = parseInt(responseHeaders['content-length'] || '0', 10)
+          let loadedSize = 0
 
           res.on('data', (chunk: Buffer) => {
             chunks.push(chunk)
-            downloaded += chunk.length
-
-            // Report progress if callback provided
-            if (onProgress) {
-              const percent = totalSize > 0 ? Math.round((downloaded / totalSize) * 100) : -1
-              onProgress({ downloaded, total: totalSize, percent })
+            if (onProgress && totalSize > 0) {
+              loadedSize += chunk.length
+              onProgress(loadedSize, totalSize)
             }
           })
 

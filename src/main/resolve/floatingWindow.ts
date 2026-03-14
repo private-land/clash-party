@@ -1,11 +1,11 @@
+import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { BrowserWindow, ipcMain } from 'electron'
 import windowStateKeeper from 'electron-window-state'
-import { join } from 'path'
 import { getAppConfig, patchAppConfig } from '../config'
+import { floatingWindowLogger } from '../utils/logger'
 import { applyTheme } from './theme'
 import { buildContextMenu, showTrayIcon } from './tray'
-import { floatingWindowLogger } from '../utils/logger'
 
 export let floatingWindow: BrowserWindow | null = null
 
@@ -39,7 +39,7 @@ async function createFloatingWindow(): Promise<void> {
       closable: safeMode,
       backgroundColor: safeMode ? '#ffffff' : useCompatMode ? '#f0f0f0' : '#00000000',
       webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
+        preload: join(__dirname, '../preload/index.cjs'),
         spellcheck: false,
         sandbox: false,
         nodeIntegration: false,
@@ -49,7 +49,9 @@ async function createFloatingWindow(): Promise<void> {
 
     if (process.platform === 'win32') {
       windowOptions.hasShadow = !safeMode
-      windowOptions.webPreferences!.offscreen = false
+      if (windowOptions.webPreferences) {
+        windowOptions.webPreferences.offscreen = false
+      }
     }
 
     floatingWindow = new BrowserWindow(windowOptions)
@@ -68,10 +70,13 @@ async function createFloatingWindow(): Promise<void> {
     })
 
     floatingWindow.on('moved', () => {
-      floatingWindow && floatingWindowState.saveState(floatingWindow)
+      if (floatingWindow) {
+        floatingWindowState.saveState(floatingWindow)
+      }
     })
 
     // IPC 监听器
+    ipcMain.removeAllListeners('updateFloatingWindow')
     ipcMain.on('updateFloatingWindow', () => {
       if (floatingWindow) {
         floatingWindow.webContents.send('controledMihomoConfigUpdated')
@@ -126,7 +131,7 @@ export async function triggerFloatingWindow(): Promise<void> {
 
 export async function closeFloatingWindow(): Promise<void> {
   if (floatingWindow) {
-    floatingWindow.close()
+    ipcMain.removeAllListeners('updateFloatingWindow')
     floatingWindow.destroy()
     floatingWindow = null
   }

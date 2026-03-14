@@ -15,13 +15,13 @@ import {
 } from '@heroui/react'
 import { toast } from '@renderer/components/base/toast'
 import React, { useState } from 'react'
-import SettingItem from '../base/base-setting-item'
 import { useOverrideConfig } from '@renderer/hooks/use-override-config'
 import { restartCore, addProfileUpdater } from '@renderer/utils/ipc'
 import { MdDeleteForever } from 'react-icons/md'
 import { FaPlus } from 'react-icons/fa6'
 import { useTranslation } from 'react-i18next'
 import { isValidCron } from 'cron-validator'
+import SettingItem from '../base/base-setting-item'
 
 interface Props {
   item: IProfileItem
@@ -32,7 +32,10 @@ const EditInfoModal: React.FC<Props> = (props) => {
   const { item, updateProfileItem, onClose } = props
   const { overrideConfig } = useOverrideConfig()
   const { items: overrideItems = [] } = overrideConfig || {}
-  const [values, setValues] = useState(item)
+  const [values, setValues] = useState({
+    ...item,
+    updateTimeout: item.updateTimeout ?? 5
+  })
   const inputWidth = 'w-[400px] md:w-[400px] lg:w-[600px] xl:w-[800px]'
   const { t } = useTranslation()
 
@@ -40,6 +43,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
     try {
       const updatedItem = {
         ...values,
+        updateTimeout: values.updateTimeout ?? 5,
         override: values.override?.filter(
           (i) =>
             overrideItems.find((t) => t.id === i) && !overrideItems.find((t) => t.id === i)?.global
@@ -192,6 +196,24 @@ const EditInfoModal: React.FC<Props> = (props) => {
               )}
             </>
           )}
+          <SettingItem title={t('profiles.editInfo.updateTimeout')}>
+            <Input
+              size="sm"
+              type="text"
+              className={cn(inputWidth)}
+              value={values.updateTimeout?.toString() ?? ''}
+              onValueChange={(v) => {
+                if (v === '') {
+                  setValues({ ...values, updateTimeout: undefined as unknown as number })
+                  return
+                }
+                if (/^\d+$/.test(v)) {
+                  setValues({ ...values, updateTimeout: parseInt(v, 10) })
+                }
+              }}
+              placeholder={t('profiles.editInfo.updateTimeoutPlaceholder')}
+            />
+          </SettingItem>
           <SettingItem title={t('profiles.editInfo.override.title')}>
             <div>
               {overrideItems

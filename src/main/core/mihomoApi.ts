@@ -1,17 +1,17 @@
 import axios, { AxiosInstance } from 'axios'
+import WebSocket from 'ws'
 import { getAppConfig, getControledMihomoConfig } from '../config'
 import { mainWindow } from '../window'
-import WebSocket from 'ws'
 import { tray } from '../resolve/tray'
 import { calcTraffic } from '../utils/calc'
-import { getRuntimeConfig } from './factory'
 import { floatingWindow } from '../resolve/floatingWindow'
-import { getMihomoIpcPath } from './manager'
 import { createLogger } from '../utils/logger'
+import { getRuntimeConfig } from './factory'
+import { getMihomoIpcPath } from './manager'
 
 const mihomoApiLogger = createLogger('MihomoApi')
 
-let axiosIns: AxiosInstance = null!
+let axiosIns: AxiosInstance | null = null
 let currentIpcPath: string = ''
 let mihomoTrafficWs: WebSocket | null = null
 let trafficRetry = 10
@@ -27,7 +27,6 @@ const MAX_RETRY = 10
 export const getAxios = async (force: boolean = false): Promise<AxiosInstance> => {
   const dynamicIpcPath = getMihomoIpcPath()
 
-  // 如路径改变 强制重新创建实例
   if (axiosIns && !force && currentIpcPath === dynamicIpcPath) {
     return axiosIns
   }
@@ -86,6 +85,11 @@ export const mihomoRules = async (): Promise<IMihomoRulesInfo> => {
   return await instance.get('/rules')
 }
 
+export const mihomoRulesDisable = async (rules: Record<string, boolean>): Promise<void> => {
+  const instance = await getAxios()
+  return await instance.patch('/rules/disable', rules)
+}
+
 export const mihomoProxies = async (): Promise<IMihomoProxies> => {
   const instance = await getAxios()
   const proxies = (await instance.get('/proxies')) as IMihomoProxies
@@ -106,14 +110,14 @@ export const mihomoGroups = async (): Promise<IMihomoMixedGroup[]> => {
     if (proxies.proxies[name] && 'all' in proxies.proxies[name] && !proxies.proxies[name].hidden) {
       const newGroup = proxies.proxies[name]
       newGroup.testUrl = url
-      const newAll = newGroup.all.map((name) => proxies.proxies[name])
+      const newAll = (newGroup.all || []).map((name) => proxies.proxies[name])
       groups.push({ ...newGroup, all: newAll })
     }
   })
   if (!groups.find((group) => group.name === 'GLOBAL')) {
     const newGlobal = proxies.proxies['GLOBAL'] as IMihomoGroup
     if (!newGlobal.hidden) {
-      const newAll = newGlobal.all.map((name) => proxies.proxies[name])
+      const newAll = (newGlobal.all || []).map((name) => proxies.proxies[name])
       groups.push({ ...newGlobal, all: newAll })
     }
   }
@@ -165,7 +169,7 @@ export const mihomoProxyDelay = async (proxy: string, url?: string): Promise<IMi
   const instance = await getAxios()
   return await instance.get(`/proxies/${encodeURIComponent(proxy)}/delay`, {
     params: {
-      url: url || delayTestUrl || 'http://www.gstatic.com/generate_204',
+      url: url || delayTestUrl || 'https://www.gstatic.com/generate_204',
       timeout: delayTestTimeout || 5000
     }
   })
@@ -177,7 +181,7 @@ export const mihomoGroupDelay = async (group: string, url?: string): Promise<IMi
   const instance = await getAxios()
   return await instance.get(`/group/${encodeURIComponent(group)}/delay`, {
     params: {
-      url: url || delayTestUrl || 'http://www.gstatic.com/generate_204',
+      url: url || delayTestUrl || 'https://www.gstatic.com/generate_204',
       timeout: delayTestTimeout || 5000
     }
   })

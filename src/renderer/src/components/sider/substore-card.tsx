@@ -2,10 +2,10 @@ import { Button, Card, CardBody, CardFooter, Tooltip } from '@heroui/react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import SubStoreIcon from '../base/substore-icon'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import SubStoreIcon from '../base/substore-icon'
 
 interface Props {
   iconOnly?: boolean
@@ -70,7 +70,7 @@ const SubStoreCard: React.FC<Props> = (props) => {
         {...attributes}
         {...listeners}
         fullWidth
-        className={`${match ? 'bg-primary' : 'hover:bg-primary/30'} ${isDragging ? `${disableAnimations ? '' : 'scale-[0.95] tap-highlight-transparent'}` : ''}`}
+        className={`${match ? 'bg-primary' : 'hover:bg-primary/30'} ${disableAnimations ? '' : `motion-reduce:transition-transform-background ${isDragging ? 'scale-[0.95] tap-highlight-transparent' : ''}`}`}
       >
         <CardBody className="pb-1 pt-0 px-0">
           <div className="flex justify-between">

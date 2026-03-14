@@ -1,9 +1,9 @@
-import { overrideConfigPath, overridePath } from '../utils/dirs'
-import { getControledMihomoConfig } from './controledMihomo'
 import { readFile, writeFile, rm } from 'fs/promises'
 import { existsSync } from 'fs'
+import { overrideConfigPath, overridePath } from '../utils/dirs'
 import * as chromeRequest from '../utils/chromeRequest'
 import { parse, stringify } from '../utils/yaml'
+import { getControledMihomoConfig } from './controledMihomo'
 
 let overrideConfig: IOverrideConfig // override.yaml
 let overrideConfigWriteQueue: Promise<void> = Promise.resolve()
@@ -14,6 +14,7 @@ export async function getOverrideConfig(force = false): Promise<IOverrideConfig>
     overrideConfig = parse(data) || { items: [] }
   }
   if (typeof overrideConfig !== 'object') overrideConfig = { items: [] }
+  if (!Array.isArray(overrideConfig.items)) overrideConfig.items = []
   return overrideConfig
 }
 
@@ -47,8 +48,8 @@ export async function addOverrideItem(item: Partial<IOverrideItem>): Promise<voi
     await updateOverrideItem(newItem)
   } else {
     config.items.push(newItem)
+    await setOverrideConfig(config)
   }
-  await setOverrideConfig(config)
 }
 
 export async function removeOverrideItem(id: string): Promise<void> {

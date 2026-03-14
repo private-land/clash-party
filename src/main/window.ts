@@ -1,18 +1,23 @@
+import { join } from 'path'
 import { BrowserWindow, Menu, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import windowStateKeeper from 'electron-window-state'
-import { join } from 'path'
+import icon from '../../resources/icon.png?asset'
 import { getAppConfig } from './config'
 import { quitWithoutCore, stopCore } from './core/manager'
 import { triggerSysProxy } from './sys/sysproxy'
 import { hideDockIcon, showDockIcon } from './resolve/tray'
-import icon from '../../resources/icon.png?asset'
 
 export let mainWindow: BrowserWindow | null = null
 let quitTimeout: NodeJS.Timeout | null = null
 
 export async function createWindow(): Promise<void> {
-  const { useWindowFrame = false, silentStart = false, autoQuitWithoutCore = false, autoQuitWithoutCoreDelay = 60 } = await getAppConfig()
+  const {
+    useWindowFrame = false,
+    silentStart = false,
+    autoQuitWithoutCore = false,
+    autoQuitWithoutCoreDelay = 60
+  } = await getAppConfig()
   const mainWindowState = windowStateKeeper({
     defaultWidth: 800,
     defaultHeight: 600,
@@ -39,7 +44,7 @@ export async function createWindow(): Promise<void> {
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon: icon } : {}),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: join(__dirname, '../preload/index.cjs'),
       spellcheck: false,
       sandbox: false,
       devTools: true
@@ -47,7 +52,11 @@ export async function createWindow(): Promise<void> {
   })
 
   mainWindowState.manage(mainWindow)
-  setupWindowEvents(mainWindow, mainWindowState, { silentStart, autoQuitWithoutCore, autoQuitWithoutCoreDelay })
+  setupWindowEvents(mainWindow, mainWindowState, {
+    silentStart,
+    autoQuitWithoutCore,
+    autoQuitWithoutCoreDelay
+  })
 
   if (is.dev) {
     mainWindow.webContents.openDevTools()
@@ -114,6 +123,10 @@ function setupWindowEvents(
   })
 
   window.on('resized', () => {
+    windowState.saveState(window)
+  })
+
+  window.on('unmaximize', () => {
     windowState.saveState(window)
   })
 

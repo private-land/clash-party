@@ -1,9 +1,9 @@
-import { app, powerMonitor } from 'electron'
 import { spawn, exec } from 'child_process'
 import { promisify } from 'util'
 import { stat } from 'fs/promises'
 import { existsSync } from 'fs'
-import { stopCore } from './core/manager'
+import { app, powerMonitor } from 'electron'
+import { stopCore, cleanupCoreWatcher } from './core/manager'
 import { triggerSysProxy } from './sys/sysproxy'
 import { exePath } from './utils/dirs'
 
@@ -56,12 +56,14 @@ export function setupPlatformSpecifics(): void {
 export function setupAppLifecycle(): void {
   app.on('before-quit', async (e) => {
     e.preventDefault()
+    cleanupCoreWatcher()
     await triggerSysProxy(false)
     await stopCore()
     app.exit()
   })
 
   powerMonitor.on('shutdown', async () => {
+    cleanupCoreWatcher()
     triggerSysProxy(false)
     await stopCore()
     app.exit()

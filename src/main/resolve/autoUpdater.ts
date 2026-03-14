@@ -1,33 +1,19 @@
-import * as chromeRequest from '../utils/chromeRequest'
-import type { DownloadProgress } from '../utils/chromeRequest'
-import { parse } from '../utils/yaml'
-import { app, shell } from 'electron'
-import { getControledMihomoConfig } from '../config'
-import { dataDir, exeDir, exePath, isPortable, resourcesFilesDir } from '../utils/dirs'
 import { copyFile, rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { existsSync } from 'fs'
 import os from 'os'
 import { exec, execSync, spawn } from 'child_process'
 import { promisify } from 'util'
-import { appLogger } from '../utils/logger'
-import { checkAdminPrivileges } from '../core/manager'
+import { createHash } from 'crypto'
+import { app, shell } from 'electron'
 import i18next from 'i18next'
 import { mainWindow } from '../window'
-
-// Download timeout: 10 minutes for large files on slow connections
-const DOWNLOAD_TIMEOUT = 10 * 60 * 1000
-// Number of retry attempts
-const DOWNLOAD_RETRY = 3
-// Delay between retries: 2 seconds
-const DOWNLOAD_RETRY_DELAY = 2000
-
-/**
- * Send download progress to renderer process
- */
-function sendDownloadProgress(progress: DownloadProgress): void {
-  mainWindow?.webContents.send('updateDownloadProgress', progress)
-}
+import { appLogger } from '../utils/logger'
+import { dataDir, exeDir, exePath, isPortable, resourcesFilesDir } from '../utils/dirs'
+import { getControledMihomoConfig } from '../config'
+import { checkAdminPrivileges } from '../core/manager'
+import { parse } from '../utils/yaml'
+import * as chromeRequest from '../utils/chromeRequest'
 
 export async function checkUpdate(): Promise<IAppVersion | undefined> {
   const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
@@ -114,14 +100,18 @@ export async function downloadAndInstallUpdate(version: string): Promise<void> {
   await appLogger.info(`Downloading update: ${baseUrl}${file}`)
   try {
     if (!existsSync(path.join(dataDir(), file))) {
-      await appLogger.info(
-        `Download config: timeout=${DOWNLOAD_TIMEOUT}ms, retry=${DOWNLOAD_RETRY}, retryDelay=${DOWNLOAD_RETRY_DELAY}ms`
-      )
+      const sha256Res = await chromeRequest.get(`${baseUrl}${file}.sha256`, {
+        proxy: {
+          protocol: 'http',
+          host: '127.0.0.1',
+          port: mixedPort
+        },
+        responseType: 'text'
+      })
+      const expectedHash = (sha256Res.data as string).trim().split(/\s+/)[0]
       const res = await chromeRequest.get(`${baseUrl}${file}`, {
         responseType: 'arraybuffer',
-        timeout: DOWNLOAD_TIMEOUT,
-        retry: DOWNLOAD_RETRY,
-        retryDelay: DOWNLOAD_RETRY_DELAY,
+        timeout: 0,
         proxy: {
           protocol: 'http',
           host: '127.0.0.1',
@@ -130,14 +120,20 @@ export async function downloadAndInstallUpdate(version: string): Promise<void> {
         headers: {
           'Content-Type': 'application/octet-stream'
         },
-        onProgress: (progress) => {
-          sendDownloadProgress(progress)
+        onProgress: (loaded, total) => {
+          mainWindow?.webContents.send('updateDownloadProgress', {
+            status: 'downloading',
+            percent: Math.round((loaded / total) * 100)
+          })
         }
       })
-      await writeFile(path.join(dataDir(), file), res.data as string | Buffer)
-      await appLogger.info(`Download completed: ${file}`)
-    } else {
-      await appLogger.info(`File already exists, skipping download: ${file}`)
+      mainWindow?.webContents.send('updateDownloadProgress', { status: 'verifying' })
+      const fileBuffer = Buffer.from(res.data as ArrayBuffer)
+      const actualHash = createHash('sha256').update(fileBuffer).digest('hex')
+      if (actualHash.toLowerCase() !== expectedHash.toLowerCase()) {
+        throw new Error(`File integrity check failed: expected ${expectedHash}, got ${actualHash}`)
+      }
+      await writeFile(path.join(dataDir(), file), fileBuffer)
     }
     if (file.endsWith('.exe')) {
       try {

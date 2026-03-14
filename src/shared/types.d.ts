@@ -31,6 +31,7 @@ type MihomoProxyType =
   | 'Hysteria2'
   | 'Tuic'
   | 'WireGuard'
+  | 'MultiProtocol'
 type TunStack = 'gvisor' | 'mixed' | 'system'
 type FindProcessMode = 'off' | 'strict' | 'always'
 type DnsMode = 'normal' | 'fake-ip' | 'redir-host'
@@ -72,6 +73,14 @@ interface IMihomoRulesDetail {
   payload: string
   proxy: string
   size: number
+  index: number
+  extra: {
+    disabled: boolean
+    hitCount: number
+    hitAt: string
+    missCount: number
+    missAt: string
+  }
 }
 
 interface IMihomoConnectionsInfo {
@@ -227,8 +236,9 @@ interface IAppConfig {
   proxyDisplayMode: 'simple' | 'full'
   proxyDisplayOrder: 'default' | 'delay' | 'name'
   profileDisplayDate?: 'expire' | 'update'
-  envType?: ('bash' | 'cmd' | 'powershell')[]
+  envType?: ('bash' | 'cmd' | 'powershell' | 'fish' | 'nushell')[]
   proxyCols: 'auto' | '1' | '2' | '3' | '4'
+  hideUnavailableProxies?: boolean
   connectionDirection: 'asc' | 'desc'
   connectionOrderBy: 'time' | 'upload' | 'download' | 'uploadSpeed' | 'downloadSpeed'
   connectionViewMode?: 'list' | 'table'
@@ -327,6 +337,7 @@ interface IAppConfig {
   enableRedirPort?: boolean
   showTproxyPort?: number
   enableTproxyPort?: boolean
+  testProfileOnStart?: boolean
 }
 
 interface IMihomoTunConfig {
@@ -495,6 +506,7 @@ interface IProfileItem {
   allowFixedInterval?: boolean
   autoUpdate?: boolean
   authToken?: string
+  updateTimeout?: number
 }
 
 interface ISubStoreSub {

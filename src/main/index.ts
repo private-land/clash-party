@@ -1,5 +1,7 @@
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { app, dialog } from 'electron'
+import i18next from 'i18next'
+import { initI18n } from '../shared/i18n'
 import { registerIpcMainHandlers } from './utils/ipc'
 import { getAppConfig, patchAppConfig } from './config'
 import {
@@ -8,7 +10,8 @@ import {
   checkHighPrivilegeCore,
   restartAsAdmin,
   initAdminStatus,
-  checkAdminPrivileges
+  checkAdminPrivileges,
+  initCoreWatcher
 } from './core/manager'
 import { createTray } from './resolve/tray'
 import { init, initBasic, safeShowErrorBox } from './utils/init'
@@ -16,13 +19,8 @@ import { initShortcut } from './resolve/shortcut'
 import { initProfileUpdater } from './core/profileUpdater'
 import { startMonitor } from './resolve/trafficMonitor'
 import { showFloatingWindow } from './resolve/floatingWindow'
-import { initI18n } from '../shared/i18n'
-import i18next from 'i18next'
-import { logger } from './utils/logger'
-import { createLogger } from './utils/logger'
+import { logger, createLogger } from './utils/logger'
 import { initWebdavBackupScheduler } from './resolve/backup'
-
-const mainLogger = createLogger('Main')
 import {
   createWindow,
   mainWindow,
@@ -37,6 +35,8 @@ import {
   setupAppLifecycle,
   getSystemLanguage
 } from './lifecycle'
+
+const mainLogger = createLogger('Main')
 
 export { mainWindow, showMainWindow, triggerMainWindow, closeMainWindow }
 
@@ -87,13 +87,13 @@ async function checkHighPrivilegeCoreEarly(): Promise<void> {
     if (choice === 0) {
       try {
         await restartAsAdmin(false)
-        process.exit(0)
+        app.exit(0)
       } catch (error) {
         safeShowErrorBox('common.error.adminRequired', `${error}`)
-        process.exit(1)
+        app.exit(1)
       }
     } else {
-      process.exit(0)
+      app.exit(0)
     }
   } catch (e) {
     mainLogger.error('Failed to check high privilege core', e)
@@ -128,9 +128,7 @@ app.on('open-url', async (_event, url) => {
   await handleDeepLink(url)
 })
 
-app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('party.mihomo.app')
-
+const initPromise = (async () => {
   await initBasic()
   await checkHighPrivilegeCoreEarly()
   await initAdminStatus()
@@ -144,49 +142,80 @@ app.whenReady().then(async () => {
       appConfig.language = systemLanguage
     }
     await initI18n({ lng: appConfig.language })
+    return appConfig
   } catch (e) {
     safeShowErrorBox('common.error.initFailed', `${e}`)
     app.quit()
+    throw e
   }
+})()
 
-  try {
-    const [startPromise] = await startCore()
-    startPromise.then(async () => {
-      await initProfileUpdater()
-      await initWebdavBackupScheduler()
-      await checkAdminRestartForTun()
-    })
-  } catch (e) {
-    safeShowErrorBox('mihomo.error.coreStartFailed', `${e}`)
-  }
+app.whenReady().then(async () => {
+  electronApp.setAppUserModelId('party.mihomo.app')
 
-  try {
-    await startMonitor()
-  } catch {
-    // ignore
-  }
+  const appConfig = await initPromise
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  const { showFloatingWindow: showFloating = false, disableTray = false } = await getAppConfig()
   registerIpcMainHandlers()
-  await createWindow()
+
+  const createWindowPromise = createWindow()
+
+  let coreStarted = false
+  const coreStartPromise = (async (): Promise<void> => {
+    try {
+      initCoreWatcher()
+      const startPromises = await startCore()
+      if (startPromises.length > 0) {
+        startPromises[0].then(async () => {
+          await initProfileUpdater()
+          await initWebdavBackupScheduler()
+          await checkAdminRestartForTun()
+        })
+      }
+      coreStarted = true
+    } catch (e) {
+      safeShowErrorBox('mihomo.error.coreStartFailed', `${e}`)
+    }
+  })()
+
+  const monitorPromise = (async (): Promise<void> => {
+    try {
+      await startMonitor()
+    } catch {
+      // ignore
+    }
+  })()
+
+  await createWindowPromise
+
+  const { showFloatingWindow: showFloating = false, disableTray = false } = appConfig
+  const uiTasks: Promise<void>[] = [initShortcut()]
 
   if (showFloating) {
-    try {
-      await showFloatingWindow()
-    } catch (error) {
-      await logger.error('Failed to create floating window on startup', error)
-    }
+    uiTasks.push(
+      (async () => {
+        try {
+          await showFloatingWindow()
+        } catch (error) {
+          await logger.error('Failed to create floating window on startup', error)
+        }
+      })()
+    )
   }
 
   if (!disableTray) {
-    await createTray()
+    uiTasks.push(createTray())
   }
 
-  await initShortcut()
+  await Promise.all(uiTasks)
+  await Promise.all([coreStartPromise, monitorPromise])
+
+  if (coreStarted) {
+    mainWindow?.webContents.send('core-started')
+  }
 
   app.on('activate', () => {
     showMainWindow()

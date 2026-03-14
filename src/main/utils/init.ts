@@ -1,3 +1,31 @@
+import { mkdir, writeFile, rm, readdir, cp, stat, rename } from 'fs/promises'
+import { existsSync } from 'fs'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import path from 'path'
+import { app, dialog } from 'electron'
+import {
+  startPacServer,
+  startSubStoreBackendServer,
+  startSubStoreFrontendServer
+} from '../resolve/server'
+import { triggerSysProxy } from '../sys/sysproxy'
+import {
+  getAppConfig,
+  getControledMihomoConfig,
+  patchAppConfig,
+  patchControledMihomoConfig
+} from '../config'
+import { startSSIDCheck } from '../sys/ssid'
+import i18next, { resources } from '../../shared/i18n'
+import { stringify } from './yaml'
+import {
+  defaultConfig,
+  defaultControledMihomoConfig,
+  defaultOverrideConfig,
+  defaultProfile,
+  defaultProfileConfig
+} from './template'
 import {
   appConfigPath,
   controledMihomoConfigPath,
@@ -15,34 +43,6 @@ import {
   subStoreDir,
   themesDir
 } from './dirs'
-import {
-  defaultConfig,
-  defaultControledMihomoConfig,
-  defaultOverrideConfig,
-  defaultProfile,
-  defaultProfileConfig
-} from './template'
-import { stringify } from './yaml'
-import { mkdir, writeFile, rm, readdir, cp, stat, rename } from 'fs/promises'
-import { existsSync } from 'fs'
-import { exec } from 'child_process'
-import { promisify } from 'util'
-import path from 'path'
-import {
-  startPacServer,
-  startSubStoreBackendServer,
-  startSubStoreFrontendServer
-} from '../resolve/server'
-import { triggerSysProxy } from '../sys/sysproxy'
-import {
-  getAppConfig,
-  getControledMihomoConfig,
-  patchAppConfig,
-  patchControledMihomoConfig
-} from '../config'
-import { app, dialog } from 'electron'
-import { startSSIDCheck } from '../sys/ssid'
-import i18next, { resources } from '../../shared/i18n'
 import { initLogger } from './logger'
 
 let isInitBasicCompleted = false
@@ -165,7 +165,7 @@ async function killOldMihomoProcesses(): Promise<void> {
       }
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    await new Promise((resolve) => setTimeout(resolve, 200))
   } catch {
     // 忽略错误
   }
@@ -178,16 +178,26 @@ async function initFiles(): Promise<void> {
     const sourcePath = path.join(resourcesFilesDir(), file)
     if (!existsSync(sourcePath)) return
 
-    const targets = [
-      path.join(mihomoWorkDir(), file),
-      path.join(mihomoTestDir(), file)
-    ]
+    const targets = [path.join(mihomoWorkDir(), file), path.join(mihomoTestDir(), file)]
 
     await Promise.all(
       targets.map(async (targetPath) => {
         const shouldCopy = !existsSync(targetPath) || (await isSourceNewer(sourcePath, targetPath))
-        if (shouldCopy) {
+        if (!shouldCopy) return
+
+        try {
           await cp(sourcePath, targetPath, { recursive: true, force: true })
+        } catch (error: unknown) {
+          const code = (error as NodeJS.ErrnoException).code
+          // 文件被占用或权限问题，如果目标已存在则跳过
+          if (
+            (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') &&
+            existsSync(targetPath)
+          ) {
+            await initLogger.warn(`Skipping ${file}: file is in use or permission denied`)
+            return
+          }
+          throw error
         }
       })
     )
@@ -311,7 +321,11 @@ async function migrateMihomoConfig(): Promise<void> {
     config['skip-auth-prefixes'][0] === '127.0.0.1/32' &&
     !config['skip-auth-prefixes'].includes('::1/128')
   ) {
-    patches['skip-auth-prefixes'] = ['127.0.0.1/32', '::1/128', ...config['skip-auth-prefixes'].slice(1)]
+    patches['skip-auth-prefixes'] = [
+      '127.0.0.1/32',
+      '::1/128',
+      ...config['skip-auth-prefixes'].slice(1)
+    ]
   }
 
   // 其他默认值
@@ -375,19 +389,27 @@ export async function initBasic(): Promise<void> {
 }
 
 export async function init(): Promise<void> {
-  await startSubStoreFrontendServer()
-  await startSubStoreBackendServer()
-
   const { sysProxy } = await getAppConfig()
-  try {
-    if (sysProxy.enable) {
-      await startPacServer()
-    }
-    await triggerSysProxy(sysProxy.enable)
-  } catch {
-    // ignore
-  }
 
-  await startSSIDCheck()
+  const initTasks: Promise<void>[] = [
+    startSubStoreFrontendServer(),
+    startSubStoreBackendServer(),
+    startSSIDCheck()
+  ]
+
+  initTasks.push(
+    (async (): Promise<void> => {
+      try {
+        if (sysProxy.enable) {
+          await startPacServer()
+        }
+        await triggerSysProxy(sysProxy.enable)
+      } catch {
+        // ignore
+      }
+    })()
+  )
+
+  await Promise.all(initTasks)
   initDeeplink()
 }

@@ -6,7 +6,6 @@ import { Virtuoso, VirtuosoHandle } from 'react-virtuoso'
 import { IoLocationSharp } from 'react-icons/io5'
 import { CgTrash } from 'react-icons/cg'
 import { useTranslation } from 'react-i18next'
-
 import { includesIgnoreCase } from '@renderer/utils/includes'
 
 const LOGS_FILTER_KEY = 'logs-filter'
@@ -47,6 +46,7 @@ const Logs: React.FC = () => {
   const [trace, setTrace] = useState(true)
 
   const virtuosoRef = useRef<VirtuosoHandle>(null)
+
   const filteredLogs = useMemo(() => {
     if (filter === '') return logs
     return logs.filter((log) => {
@@ -57,16 +57,6 @@ const Logs: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(LOGS_FILTER_KEY, filter)
   }, [filter])
-
-  useEffect(() => {
-    if (!trace) return
-    virtuosoRef.current?.scrollToIndex({
-      index: filteredLogs.length - 1,
-      behavior: 'smooth',
-      align: 'end',
-      offset: 0
-    })
-  }, [filteredLogs, trace])
 
   useEffect(() => {
     const old = cachedLogs.trigger
@@ -122,6 +112,8 @@ const Logs: React.FC = () => {
         <Virtuoso
           ref={virtuosoRef}
           data={filteredLogs}
+          initialTopMostItemIndex={filteredLogs.length - 1}
+          followOutput={trace}
           itemContent={(i, log) => (
             <LogItem index={i} time={log.time} type={log.type} payload={log.payload} />
           )}

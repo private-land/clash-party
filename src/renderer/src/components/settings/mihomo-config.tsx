@@ -1,7 +1,5 @@
 import React, { useState } from 'react'
-import SettingCard from '../base/base-setting-card'
 import { toast } from '@renderer/components/base/toast'
-import SettingItem from '../base/base-setting-item'
 import { Button, Input, Select, SelectItem, Switch, Tooltip } from '@heroui/react'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import debounce from '@renderer/utils/debounce'
@@ -11,6 +9,8 @@ import { BiCopy } from 'react-icons/bi'
 import { IoIosHelpCircle } from 'react-icons/io'
 import { platform, version } from '@renderer/utils/init'
 import { useTranslation } from 'react-i18next'
+import SettingItem from '../base/base-setting-item'
+import SettingCard from '../base/base-setting-card'
 
 const MihomoConfig: React.FC = () => {
   const { t } = useTranslation()
@@ -21,6 +21,7 @@ const MihomoConfig: React.FC = () => {
     delayTestTimeout,
     githubToken = '',
     autoCloseConnection = true,
+    testProfileOnStart = true,
     pauseSSID = [],
     delayTestUrl,
     userAgent,
@@ -225,6 +226,25 @@ const MihomoConfig: React.FC = () => {
           isSelected={autoCloseConnection}
           onValueChange={(v) => {
             patchAppConfig({ autoCloseConnection: v })
+          }}
+        />
+      </SettingItem>
+      <SettingItem
+        title={t('mihomo.testProfileOnStart')}
+        actions={
+          <Tooltip content={t('mihomo.testProfileOnStartTooltip')}>
+            <Button isIconOnly size="sm" variant="light">
+              <IoIosHelpCircle className="text-lg" />
+            </Button>
+          </Tooltip>
+        }
+        divider
+      >
+        <Switch
+          size="sm"
+          isSelected={testProfileOnStart}
+          onValueChange={(v) => {
+            patchAppConfig({ testProfileOnStart: v })
           }}
         />
       </SettingItem>
