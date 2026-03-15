@@ -31,6 +31,7 @@ type MihomoProxyType =
   | 'Hysteria2'
   | 'Tuic'
   | 'WireGuard'
+  | 'Anytls'
   | 'MultiProtocol'
 type TunStack = 'gvisor' | 'mixed' | 'system'
 type FindProcessMode = 'off' | 'strict' | 'always'
