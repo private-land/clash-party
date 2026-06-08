@@ -2,7 +2,7 @@ import { Tabs, Tab } from '@heroui/react'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
 import { useGroups } from '@renderer/hooks/use-groups'
-import { mihomoCloseAllConnections, patchMihomoConfig } from '@renderer/utils/ipc'
+import { mihomoCloseAllConnections, patchMihomoConfig, updateTrayIcon } from '@renderer/utils/ipc'
 import { Key } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -22,6 +22,7 @@ const OutboundModeSwitcher: React.FC = () => {
     }
     mutateGroups()
     window.electron.ipcRenderer.send('updateTrayMenu')
+    await updateTrayIcon()
   }
   if (!mode) return null
   return (

@@ -1,6 +1,6 @@
 import { mkdir, writeFile, rm, readdir, cp, stat, rename } from 'fs/promises'
 import { existsSync } from 'fs'
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
 import { app, dialog } from 'electron'
@@ -46,6 +46,9 @@ import {
 import { initLogger } from './logger'
 
 let isInitBasicCompleted = false
+let isRuntimeFilesCompleted = false
+let initBasicPromise: Promise<void> | null = null
+let runtimeFilesPromise: Promise<void> | null = null
 
 export function safeShowErrorBox(titleKey: string, message: string): void {
   let title: string
@@ -141,27 +144,34 @@ async function initConfig(): Promise<void> {
 async function killOldMihomoProcesses(): Promise<void> {
   if (process.platform !== 'win32') return
 
-  const execPromise = promisify(exec)
   try {
-    const { stdout } = await execPromise(
-      'powershell -NoProfile -Command "Get-Process | Where-Object {$_.ProcessName -like \'*mihomo*\'} | Select-Object Id | ConvertTo-Json"',
-      { encoding: 'utf8' }
-    )
+    const execFilePromise = promisify(execFile)
+    const coreNames = new Set(['mihomo.exe', 'mihomo-alpha.exe', 'mihomo-smart.exe'])
+    const { stdout } = await execFilePromise('tasklist', ['/FO', 'CSV', '/NH'], {
+      windowsHide: true,
+      timeout: 3000,
+      maxBuffer: 4 * 1024 * 1024
+    })
 
-    if (!stdout.trim()) return
+    const pids = stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.includes('INFO:'))
+      .map((line) => {
+        const [, imageName, pid] = line.match(/^"([^"]+)","(\d+)"/) || []
+        if (!imageName || !coreNames.has(imageName.toLowerCase())) return NaN
+        return parseInt(pid, 10)
+      })
+      .filter((pid) => !isNaN(pid) && pid !== process.pid)
 
-    const processes = JSON.parse(stdout)
-    const processArray = Array.isArray(processes) ? processes : [processes]
+    if (pids.length === 0) return
 
-    for (const proc of processArray) {
-      const pid = proc.Id
-      if (pid && pid !== process.pid) {
-        try {
-          process.kill(pid, 'SIGTERM')
-          await initLogger.info(`Terminated old mihomo process ${pid}`)
-        } catch {
-          // 进程可能退出
-        }
+    for (const pid of pids) {
+      try {
+        process.kill(pid, 'SIGTERM')
+        await initLogger.info(`Terminated old mihomo process ${pid}`)
+      } catch {
+        // 进程可能退出
       }
     }
 
@@ -174,11 +184,11 @@ async function killOldMihomoProcesses(): Promise<void> {
 async function initFiles(): Promise<void> {
   await killOldMihomoProcesses()
 
-  const copyFile = async (file: string): Promise<void> => {
+  const copyFile = async (file: string, targetDirs: string[]): Promise<void> => {
     const sourcePath = path.join(resourcesFilesDir(), file)
     if (!existsSync(sourcePath)) return
 
-    const targets = [path.join(mihomoWorkDir(), file), path.join(mihomoTestDir(), file)]
+    const targets = targetDirs.map((dir) => path.join(dir, file))
 
     await Promise.all(
       targets.map(async (targetPath) => {
@@ -204,23 +214,46 @@ async function initFiles(): Promise<void> {
   }
 
   const files = [
-    'country.mmdb',
-    'geoip.metadb',
-    'geoip.dat',
-    'geosite.dat',
-    'ASN.mmdb',
-    'sub-store.bundle.cjs',
-    'sub-store-frontend'
+    {
+      name: 'country.mmdb',
+      targetDirs: [mihomoWorkDir(), mihomoTestDir()]
+    },
+    {
+      name: 'geoip.metadb',
+      targetDirs: [mihomoWorkDir(), mihomoTestDir()]
+    },
+    {
+      name: 'geoip.dat',
+      targetDirs: [mihomoWorkDir(), mihomoTestDir()]
+    },
+    {
+      name: 'geosite.dat',
+      targetDirs: [mihomoWorkDir(), mihomoTestDir()]
+    },
+    {
+      name: 'ASN.mmdb',
+      targetDirs: [mihomoWorkDir(), mihomoTestDir()]
+    },
+    {
+      name: 'sub-store.bundle.cjs',
+      targetDirs: [mihomoWorkDir()]
+    },
+    {
+      name: 'sub-store-frontend',
+      targetDirs: [mihomoWorkDir()]
+    }
   ]
 
   const criticalFiles = ['country.mmdb', 'geoip.dat', 'geosite.dat']
 
-  const results = await Promise.allSettled(files.map(copyFile))
+  const results = await Promise.allSettled(
+    files.map(({ name, targetDirs }) => copyFile(name, targetDirs))
+  )
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i]
     if (result.status === 'rejected') {
-      const file = files[i]
+      const file = files[i].name
       await initLogger.error(`Failed to copy ${file}`, result.reason)
       if (criticalFiles.includes(file)) {
         throw new Error(`Failed to copy critical file ${file}: ${result.reason}`)
@@ -241,7 +274,7 @@ async function cleanup(): Promise<void> {
   // 清理过期日志
   const { maxLogDays = 7 } = await getAppConfig()
   const maxAge = maxLogDays * 24 * 60 * 60 * 1000
-  const datePattern = /^\d{4}-\d{2}-\d{2}/
+  const datePattern = /\d{4}-\d{2}-\d{2}/
 
   const logCleanup = logFiles
     .filter((log) => {
@@ -377,25 +410,46 @@ function initDeeplink(): void {
 
 export async function initBasic(): Promise<void> {
   if (isInitBasicCompleted) return
+  if (initBasicPromise) return initBasicPromise
 
-  await initDirs()
-  await initConfig()
-  await migration()
-  await migrateSubStoreFiles()
-  await initFiles()
-  await cleanup()
+  initBasicPromise = (async () => {
+    await initDirs()
+    await initConfig()
+    await migration()
+    await migrateSubStoreFiles()
 
-  isInitBasicCompleted = true
+    isInitBasicCompleted = true
+  })()
+
+  try {
+    await initBasicPromise
+  } finally {
+    initBasicPromise = null
+  }
+}
+
+export async function ensureRuntimeFiles(): Promise<void> {
+  if (isRuntimeFilesCompleted) return
+  if (runtimeFilesPromise) return runtimeFilesPromise
+
+  runtimeFilesPromise = (async () => {
+    await initBasic()
+    await initFiles()
+    await cleanup()
+    isRuntimeFilesCompleted = true
+  })()
+
+  try {
+    await runtimeFilesPromise
+  } finally {
+    runtimeFilesPromise = null
+  }
 }
 
 export async function init(): Promise<void> {
   const { sysProxy } = await getAppConfig()
 
-  const initTasks: Promise<void>[] = [
-    startSubStoreFrontendServer(),
-    startSubStoreBackendServer(),
-    startSSIDCheck()
-  ]
+  const initTasks: Promise<void>[] = [ensureRuntimeFiles(), startSSIDCheck()]
 
   initTasks.push(
     (async (): Promise<void> => {
@@ -412,4 +466,9 @@ export async function init(): Promise<void> {
 
   await Promise.all(initTasks)
   initDeeplink()
+}
+
+export async function startSubStoreServices(): Promise<void> {
+  await ensureRuntimeFiles()
+  await Promise.all([startSubStoreFrontendServer(), startSubStoreBackendServer()])
 }

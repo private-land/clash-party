@@ -5,8 +5,7 @@ import {
   ModalBody,
   ModalContent,
   ModalFooter,
-  ModalHeader,
-  Progress
+  ModalHeader
 } from '@heroui/react'
 import { toast } from '@renderer/components/base/toast'
 import ReactMarkdown from 'react-markdown'
@@ -20,21 +19,13 @@ interface Props {
   onClose: () => void
 }
 
-/**
- * Format bytes to human readable string
- */
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
 const UpdaterModal: React.FC<Props> = (props) => {
   const { version, changelog, onClose } = props
   const [downloading, setDownloading] = useState(false)
-  const [progress, setProgress] = useState<{ status: 'downloading' | 'verifying'; percent?: number } | null>(null)
+  const [progress, setProgress] = useState<{
+    status: 'downloading' | 'verifying'
+    percent?: number
+  } | null>(null)
   const { t } = useTranslation()
 
   useEffect(() => {
@@ -90,7 +81,9 @@ const UpdaterModal: React.FC<Props> = (props) => {
               <div className="w-full bg-default-200 rounded-full h-1.5">
                 <div
                   className="bg-primary h-1.5 rounded-full transition-all duration-300"
-                  style={{ width: `${progress.status === 'verifying' ? 100 : (progress.percent ?? 0)}%` }}
+                  style={{
+                    width: `${progress.status === 'verifying' ? 100 : (progress.percent ?? 0)}%`
+                  }}
                 />
               </div>
               <p className="text-xs text-foreground-400 text-center">

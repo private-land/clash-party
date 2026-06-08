@@ -1,25 +1,89 @@
-import { readFile, rm, writeFile } from 'fs/promises'
-import { existsSync } from 'fs'
-import { join } from 'path'
+import { access, readFile, rm, unlink, writeFile } from 'fs/promises'
+import { constants, existsSync } from 'fs'
+import { exec, execFile } from 'child_process'
+import { isAbsolute, join, relative, resolve } from 'path'
+import { promisify } from 'util'
+import { randomBytes } from 'crypto'
+import { tmpdir } from 'os'
 import { app } from 'electron'
 import i18next from 'i18next'
 import * as chromeRequest from '../utils/chromeRequest'
 import { parse, stringify } from '../utils/yaml'
 import { defaultProfile } from '../utils/template'
 import { subStorePort } from '../resolve/server'
-import { mihomoUpgradeConfig } from '../core/mihomoApi'
+import { mihomoCloseAllConnections, mihomoHotReloadConfig } from '../core/mihomoApi'
 import { restartCore } from '../core/manager'
+import { generateProfile } from '../core/factory'
 import { addProfileUpdater, removeProfileUpdater } from '../core/profileUpdater'
-import { mihomoProfileWorkDir, mihomoWorkDir, profileConfigPath, profilePath } from '../utils/dirs'
+import {
+  mihomoCorePath,
+  mihomoProfileWorkDir,
+  mihomoWorkDir,
+  profileConfigPath,
+  profilePath
+} from '../utils/dirs'
 import { createLogger } from '../utils/logger'
 import { getAppConfig } from './app'
 import { getControledMihomoConfig } from './controledMihomo'
 
 const profileLogger = createLogger('Profile')
+const execFilePromise = promisify(execFile)
 
 let profileConfig: IProfileConfig
 let profileConfigWriteQueue: Promise<void> = Promise.resolve()
 let changeProfileQueue: Promise<void> = Promise.resolve()
+// 并发去重
+const inflightRemoteFetches = new Map<string, Promise<IProfileItem>>()
+
+function isPermissionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code
+  return code === 'EACCES' || code === 'EPERM'
+}
+
+function assertInsideWorkDir(targetPath: string): void {
+  const relativePath = relative(resolve(mihomoWorkDir()), resolve(targetPath))
+  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    throw new Error(`Refusing to delete outside work directory: ${targetPath}`)
+  }
+}
+
+async function canRemoveProfileWorkDir(workDir: string): Promise<boolean> {
+  try {
+    await Promise.all([
+      access(mihomoWorkDir(), constants.W_OK | constants.X_OK),
+      access(workDir, constants.R_OK | constants.W_OK | constants.X_OK)
+    ])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function removeProfileWorkDirWithPkexec(workDir: string): Promise<void> {
+  assertInsideWorkDir(workDir)
+  await execFilePromise('pkexec', ['rm', '-rf', '--', workDir])
+}
+
+async function removeProfileWorkDir(id: string): Promise<void> {
+  const workDir = mihomoProfileWorkDir(id)
+  if (!existsSync(workDir)) return
+  assertInsideWorkDir(workDir)
+
+  if (process.platform === 'linux' && !(await canRemoveProfileWorkDir(workDir))) {
+    await removeProfileWorkDirWithPkexec(workDir)
+    return
+  }
+
+  try {
+    await rm(workDir, { recursive: true, force: true })
+  } catch (error) {
+    if (process.platform !== 'linux' || !isPermissionError(error)) {
+      throw error
+    }
+
+    await removeProfileWorkDirWithPkexec(workDir)
+  }
+}
 
 export async function getProfileConfig(force = false): Promise<IProfileConfig> {
   if (force || !profileConfig) {
@@ -28,7 +92,7 @@ export async function getProfileConfig(force = false): Promise<IProfileConfig> {
   }
   if (typeof profileConfig !== 'object') profileConfig = { items: [] }
   if (!Array.isArray(profileConfig.items)) profileConfig.items = []
-  return structuredClone(profileConfig)
+  return JSON.parse(JSON.stringify(profileConfig))
 }
 
 export async function setProfileConfig(config: IProfileConfig): Promise<void> {
@@ -48,12 +112,12 @@ export async function updateProfileConfig(
     profileConfig = parse(data) || { items: [] }
     if (typeof profileConfig !== 'object') profileConfig = { items: [] }
     if (!Array.isArray(profileConfig.items)) profileConfig.items = []
-    profileConfig = await updater(structuredClone(profileConfig))
+    profileConfig = await updater(JSON.parse(JSON.stringify(profileConfig)))
     result = profileConfig
     await writeFile(profileConfigPath(), stringify(profileConfig), 'utf-8')
   })
   await profileConfigWriteQueue
-  return structuredClone(result ?? profileConfig)
+  return JSON.parse(JSON.stringify(result ?? profileConfig))
 }
 
 export async function getProfileItem(id: string | undefined): Promise<IProfileItem | undefined> {
@@ -77,7 +141,20 @@ export async function changeCurrentProfile(id: string): Promise<void> {
           config.current = id
           return config
         })
-        await restartCore()
+        const { useHotReloadProfile = false, hotReloadProfileAutoCloseConnection = false } =
+          await getAppConfig()
+        if (useHotReloadProfile) {
+          await mihomoHotReloadConfig()
+          if (hotReloadProfileAutoCloseConnection) {
+            try {
+              await mihomoCloseAllConnections()
+            } catch (error) {
+              profileLogger.warn('Failed to close connections after profile hot reload', error)
+            }
+          }
+        } else {
+          await restartCore()
+        }
       } catch (e) {
         // 回滚配置
         await updateProfileConfig((config) => {
@@ -107,6 +184,7 @@ export async function updateProfileItem(item: IProfileItem): Promise<void> {
 export async function addProfileItem(item: Partial<IProfileItem>): Promise<void> {
   const newItem = await createProfile(item)
   let shouldChangeCurrent = false
+  let newProfileIsCurrentAfterUpdate = false
   await updateProfileConfig((config) => {
     const existingIndex = config.items.findIndex((i) => i.id === newItem.id)
     if (existingIndex !== -1) {
@@ -116,9 +194,23 @@ export async function addProfileItem(item: Partial<IProfileItem>): Promise<void>
     }
     if (!config.current) {
       shouldChangeCurrent = true
+      newProfileIsCurrentAfterUpdate = true
     }
     return config
   })
+
+  // If the new profile will become the current profile, ensure generateProfile is called
+  // to prepare working directory before restarting core
+  if (newProfileIsCurrentAfterUpdate) {
+    const { diffWorkDir } = await getAppConfig()
+    if (diffWorkDir) {
+      try {
+        await generateProfile()
+      } catch (error) {
+        profileLogger.warn('Failed to generate profile for new subscription', error)
+      }
+    }
+  }
 
   if (shouldChangeCurrent) {
     await changeCurrentProfile(newItem.id)
@@ -145,9 +237,7 @@ export async function removeProfileItem(id: string): Promise<void> {
   if (shouldRestart) {
     await restartCore()
   }
-  if (existsSync(mihomoProfileWorkDir(id))) {
-    await rm(mihomoProfileWorkDir(id), { recursive: true })
-  }
+  await removeProfileWorkDir(id)
 }
 
 export async function getCurrentProfileItem(): Promise<IProfileItem> {
@@ -175,6 +265,9 @@ interface FetchResult {
   data: string
   headers: Record<string, string>
 }
+
+const MAX_TIMER_DELAY_MS = 2_147_483_647
+const MAX_PROFILE_INTERVAL_MINUTES = Math.floor(MAX_TIMER_DELAY_MS / (60 * 1000))
 
 async function fetchAndValidateSubscription(options: FetchOptions): Promise<FetchResult> {
   const { url, useProxy, mixedPort, userAgent, authToken, timeout, substore } = options
@@ -232,8 +325,9 @@ export async function createProfile(item: Partial<IProfileItem>): Promise<IProfi
     allowFixedInterval: item.allowFixedInterval || false,
     autoUpdate: item.autoUpdate ?? false,
     authToken: item.authToken,
+    userAgent: item.userAgent,
     updated: new Date().getTime(),
-    updateTimeout: item.updateTimeout || 5
+    updateTimeout: item.updateTimeout
   }
 
   // Local
@@ -245,54 +339,74 @@ export async function createProfile(item: Partial<IProfileItem>): Promise<IProfi
   // Remote
   if (!item.url) throw new Error('Empty URL')
 
-  const { userAgent, subscriptionTimeout = 30000 } = await getAppConfig()
-  const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
-  const userItemTimeoutMs = (newItem.updateTimeout || 5) * 1000
+  const profileUrl = item.url
+  const dedupKey = `${id}::${profileUrl}`
+  const existing = inflightRemoteFetches.get(dedupKey)
+  if (existing) return existing
 
-  const baseOptions: Omit<FetchOptions, 'useProxy' | 'timeout'> = {
-    url: item.url,
-    mixedPort,
-    userAgent: userAgent || `mihomo.panda/v${app.getVersion()} (clash.meta)`,
-    authToken: item.authToken,
-    substore: newItem.substore || false
-  }
+  const promise = (async (): Promise<IProfileItem> => {
+    const { userAgent, subscriptionTimeout = 30000 } = await getAppConfig()
+    const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
+    const userItemTimeoutMs =
+      typeof newItem.updateTimeout === 'number' && newItem.updateTimeout > 0
+        ? newItem.updateTimeout * 1000
+        : subscriptionTimeout
 
-  const fetchSub = (useProxy: boolean, timeout: number) =>
-    fetchAndValidateSubscription({ ...baseOptions, useProxy, timeout })
+    const baseOptions: Omit<FetchOptions, 'useProxy' | 'timeout'> = {
+      url: profileUrl,
+      mixedPort,
+      userAgent: item.userAgent || userAgent || `mihomo.panda/v${app.getVersion()} (clash.meta)`,
+      authToken: item.authToken,
+      substore: newItem.substore || false
+    }
 
-  let result: FetchResult
-  if (newItem.useProxy || newItem.substore) {
-    result = await fetchSub(Boolean(newItem.useProxy), userItemTimeoutMs)
-  } else {
-    try {
-      result = await fetchSub(false, userItemTimeoutMs)
-    } catch (directError) {
+    const fetchSub = (useProxy: boolean, timeout: number): Promise<FetchResult> =>
+      fetchAndValidateSubscription({ ...baseOptions, useProxy, timeout })
+
+    let result: FetchResult
+    if (newItem.useProxy || newItem.substore) {
+      result = await fetchSub(Boolean(newItem.useProxy), userItemTimeoutMs)
+    } else {
       try {
-        // smart fallback
-        result = await fetchSub(true, subscriptionTimeout)
-      } catch {
-        throw directError
+        result = await fetchSub(false, userItemTimeoutMs)
+      } catch (directError) {
+        try {
+          // smart fallback
+          result = await fetchSub(true, subscriptionTimeout)
+        } catch {
+          throw directError
+        }
       }
     }
-  }
 
-  const { data, headers } = result
+    const { data, headers } = result
 
-  if (headers['content-disposition'] && newItem.name === 'Remote File') {
-    newItem.name = parseFilename(headers['content-disposition'])
-  }
-  if (headers['profile-web-page-url']) {
-    newItem.home = headers['profile-web-page-url']
-  }
-  if (headers['profile-update-interval'] && !item.allowFixedInterval) {
-    newItem.interval = parseInt(headers['profile-update-interval']) * 60
-  }
-  if (headers['subscription-userinfo']) {
-    newItem.extra = parseSubinfo(headers['subscription-userinfo'])
-  }
+    if (headers['content-disposition'] && newItem.name === 'Remote File') {
+      newItem.name = parseFilename(headers['content-disposition'])
+    }
+    if (headers['profile-web-page-url']) {
+      newItem.home = headers['profile-web-page-url']
+    }
+    if (headers['profile-update-interval'] && !item.allowFixedInterval) {
+      const hours = Number(headers['profile-update-interval'])
+      if (Number.isFinite(hours) && hours > 0) {
+        newItem.interval = Math.min(Math.ceil(hours * 60), MAX_PROFILE_INTERVAL_MINUTES)
+      }
+    }
+    if (headers['subscription-userinfo']) {
+      newItem.extra = parseSubinfo(headers['subscription-userinfo'])
+    }
 
-  await setProfileStr(id, data)
-  return newItem
+    await setProfileStr(id, data)
+    return newItem
+  })()
+
+  inflightRemoteFetches.set(dedupKey, promise)
+  try {
+    return await promise
+  } finally {
+    inflightRemoteFetches.delete(dedupKey)
+  }
 }
 
 export async function getProfileStr(id: string | undefined): Promise<string> {
@@ -309,15 +423,12 @@ export async function setProfileStr(id: string, content: string): Promise<void> 
   await writeFile(profilePath(id), content, 'utf-8')
   if (current === id) {
     try {
-      const { generateProfile } = await import('../core/factory')
-      await generateProfile()
-      await mihomoUpgradeConfig()
-      profileLogger.info('Config reloaded successfully using mihomoUpgradeConfig')
+      await mihomoHotReloadConfig()
+      profileLogger.info('Config reloaded successfully')
     } catch (error) {
-      profileLogger.error('Failed to reload config with mihomoUpgradeConfig', error)
+      profileLogger.error('Failed to reload config', error)
       try {
         profileLogger.info('Falling back to restart core')
-        const { restartCore } = await import('../core/manager')
         await restartCore()
         profileLogger.info('Core restarted successfully')
       } catch (restartError) {
@@ -412,14 +523,7 @@ export async function setFileStr(path: string, content: string): Promise<void> {
 }
 
 export async function convertMrsRuleset(filePath: string, behavior: string): Promise<string> {
-  const { exec } = await import('child_process')
-  const { promisify } = await import('util')
   const execAsync = promisify(exec)
-  const { mihomoCorePath } = await import('../utils/dirs')
-  const { getAppConfig } = await import('./app')
-  const { tmpdir } = await import('os')
-  const { randomBytes } = await import('crypto')
-  const { unlink } = await import('fs/promises')
 
   const { core = 'mihomo' } = await getAppConfig()
   const corePath = mihomoCorePath(core)
@@ -437,7 +541,7 @@ export async function convertMrsRuleset(filePath: string, behavior: string): Pro
 
   try {
     // 使用 mihomo convert-ruleset 命令转换 MRS 文件为 text 格式
-    // 命令格式: mihomo convert-ruleset <behavior> <format> <source>
+    // 命令格式：mihomo convert-ruleset <behavior> <format> <source>
     await execAsync(`"${corePath}" convert-ruleset ${behavior} mrs "${fullPath}" "${tempFilePath}"`)
     const content = await readFile(tempFilePath, 'utf-8')
     await unlink(tempFilePath)

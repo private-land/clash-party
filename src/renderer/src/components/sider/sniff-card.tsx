@@ -3,8 +3,7 @@ import { toast } from '@renderer/components/base/toast'
 import BorderSwitch from '@renderer/components/base/border-swtich'
 import { RiScan2Fill } from 'react-icons/ri'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { restartCore } from '@renderer/utils/ipc'
-import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
+import { mihomoHotReloadConfig } from '@renderer/utils/ipc'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
@@ -26,7 +25,6 @@ const SniffCard: React.FC<Props> = (props) => {
   const location = useLocation()
   const navigate = useNavigate()
   const match = location.pathname.includes('/sniffer')
-  const { patchControledMihomoConfig } = useControledMihomoConfig()
   const {
     attributes,
     listeners,
@@ -41,8 +39,7 @@ const SniffCard: React.FC<Props> = (props) => {
   const onChange = async (controlSniff: boolean): Promise<void> => {
     try {
       await patchAppConfig({ controlSniff })
-      await patchControledMihomoConfig({})
-      await restartCore()
+      await mihomoHotReloadConfig()
     } catch (e) {
       toast.error(String(e))
     }

@@ -1,3 +1,5 @@
+import { existsSync } from 'fs'
+import { extname } from 'path'
 import { app, clipboard, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 import { t } from 'i18next'
 import {
@@ -20,6 +22,7 @@ import templateIcon from '../../../resources/iconTemplate.png?asset'
 import {
   mihomoChangeProxy,
   mihomoCloseAllConnections,
+  mihomoGroupDelay,
   mihomoGroups,
   patchMihomoConfig,
   getTrayIconStatus,
@@ -30,7 +33,6 @@ import { dataDir, logDir, mihomoCoreDir, mihomoWorkDir } from '../utils/dirs'
 import { triggerSysProxy } from '../sys/sysproxy'
 import {
   quitWithoutCore,
-  restartCore,
   checkMihomoCorePermissions,
   requestTunPermissions,
   restartAsAdmin
@@ -39,8 +41,13 @@ import { trayLogger } from '../utils/logger'
 import { floatingWindow, triggerFloatingWindow } from './floatingWindow'
 
 export let tray: Tray | null = null
+let trayMenu: Menu | null = null
 // macOS 流量显示状态，避免异步读取配置导致的时序问题
 let macTrafficIconEnabled = false
+type TrayIconStatus = 'white' | 'blue' | 'green' | 'red'
+type TrayImage = Electron.NativeImage | string
+const customTrayIconSize = 16
+const customTrayIconScaleFactors = [1, 1.25, 1.5, 2, 2.5, 3]
 
 export const buildContextMenu = async (): Promise<Menu> => {
   // 添加调试日志
@@ -83,28 +90,46 @@ export const buildContextMenu = async (): Promise<Menu> => {
           id: group.name,
           label: groupLabel,
           type: 'submenu' as const,
-          submenu: group.all.map((proxy) => {
-            const delay = proxy.history.length ? proxy.history[proxy.history.length - 1].delay : -1
-            let displayDelay = `(${delay}ms)`
-            if (delay === -1) {
-              displayDelay = ''
-            }
-            if (delay === 0) {
-              displayDelay = '(Timeout)'
-            }
-            return {
-              id: proxy.name,
-              label: `${proxy.name}   ${displayDelay}`,
-              type: 'radio' as const,
-              checked: proxy.name === group.now,
+          submenu: [
+            {
+              id: `${group.name}-delay-test`,
+              label: t('tray.delayTest'),
+              type: 'normal' as const,
               click: async (): Promise<void> => {
-                await mihomoChangeProxy(group.name, proxy.name)
-                if (autoCloseConnection) {
-                  await mihomoCloseAllConnections()
+                try {
+                  await mihomoGroupDelay(group.name, group.testUrl)
+                  mainWindow?.webContents.send('groupsUpdated')
+                } catch (error) {
+                  await trayLogger.error(`Failed to test proxy group delay: ${group.name}`, error)
                 }
               }
-            }
-          })
+            },
+            { type: 'separator' as const },
+            ...group.all.map((proxy) => {
+              const delay = proxy.history.length
+                ? proxy.history[proxy.history.length - 1].delay
+                : -1
+              let displayDelay = `(${delay}ms)`
+              if (delay === -1) {
+                displayDelay = ''
+              }
+              if (delay === 0) {
+                displayDelay = '(Timeout)'
+              }
+              return {
+                id: proxy.name,
+                label: `${proxy.name}   ${displayDelay}`,
+                type: 'radio' as const,
+                checked: proxy.name === group.now,
+                click: async (): Promise<void> => {
+                  await mihomoChangeProxy(group.name, proxy.name)
+                  if (autoCloseConnection) {
+                    await mihomoCloseAllConnections()
+                  }
+                }
+              }
+            })
+          ]
         }
       })
 
@@ -264,7 +289,6 @@ export const buildContextMenu = async (): Promise<Menu> => {
           }
           mainWindow?.webContents.send('controledMihomoConfigUpdated')
           floatingWindow?.webContents.send('controledMihomoConfigUpdated')
-          await restartCore()
         } catch {
           // ignore
         } finally {
@@ -376,8 +400,8 @@ export async function createTray(): Promise<void> {
   const { useDockIcon = true, swapTrayClick = false } = await getAppConfig()
   if (process.platform === 'linux') {
     tray = new Tray(pngIcon)
-    const menu = await buildContextMenu()
-    tray.setContextMenu(menu)
+    trayMenu = await buildContextMenu()
+    tray.setContextMenu(trayMenu)
   }
   if (process.platform === 'darwin') {
     const icon = nativeImage.createFromPath(templateIcon).resize({ height: 16 })
@@ -387,7 +411,7 @@ export async function createTray(): Promise<void> {
   if (process.platform === 'win32') {
     tray = new Tray(icoIcon)
   }
-  tray?.setToolTip('Clash Party')
+  await updateTrayToolTip()
   tray?.setIgnoreDoubleClickEvents(true)
 
   await updateTrayIcon()
@@ -400,9 +424,17 @@ export async function createTray(): Promise<void> {
     ipcMain.removeAllListeners('trayIconUpdate')
     ipcMain.on('trayIconUpdate', async (_, png: string, enabled: boolean) => {
       macTrafficIconEnabled = enabled
+      const { customTrayIcon = '' } = await getAppConfig()
+      const customIcon = createCustomTrayImage(customTrayIcon)
+      if (customIcon) {
+        tray?.setImage(customIcon)
+        await updateTrayToolTip(undefined, undefined, true)
+        return
+      }
       const image = nativeImage.createFromDataURL(png).resize({ height: 16 })
       image.setTemplateImage(true)
       tray?.setImage(image)
+      await updateTrayToolTip(undefined, undefined, false)
     })
     // macOS 默认行为：左键显示窗口，右键显示菜单
     tray?.addListener('click', async () => {
@@ -453,10 +485,10 @@ export async function createTray(): Promise<void> {
 }
 
 async function updateTrayMenu(): Promise<void> {
-  const menu = await buildContextMenu()
-  tray?.popUpContextMenu(menu) // 弹出菜单
+  trayMenu = await buildContextMenu()
+  tray?.popUpContextMenu(trayMenu) // 弹出菜单
   if (process.platform === 'linux') {
-    tray?.setContextMenu(menu)
+    tray?.setContextMenu(trayMenu)
   }
 }
 
@@ -476,15 +508,11 @@ export async function copyEnv(
       break
     }
     case 'cmd': {
-      clipboard.writeText(
-        `set http_proxy=${proxyUrl}\r\nset https_proxy=${proxyUrl}`
-      )
+      clipboard.writeText(`set http_proxy=${proxyUrl}\r\nset https_proxy=${proxyUrl}`)
       break
     }
     case 'powershell': {
-      clipboard.writeText(
-        `$env:HTTP_PROXY="${proxyUrl}"; $env:HTTPS_PROXY="${proxyUrl}"`
-      )
+      clipboard.writeText(`$env:HTTP_PROXY="${proxyUrl}"; $env:HTTPS_PROXY="${proxyUrl}"`)
       break
     }
     case 'fish': {
@@ -513,6 +541,7 @@ export async function closeTrayIcon(): Promise<void> {
     tray.destroy()
   }
   tray = null
+  trayMenu = null
 }
 
 export async function showDockIcon(): Promise<void> {
@@ -527,7 +556,7 @@ export async function hideDockIcon(): Promise<void> {
   }
 }
 
-const getIconPaths = () => {
+const getIconPaths = (): Record<TrayIconStatus, string> => {
   if (process.platform === 'win32') {
     return {
       white: icoIcon,
@@ -545,27 +574,126 @@ const getIconPaths = () => {
   }
 }
 
+function resizeTrayImageForScale(
+  icon: Electron.NativeImage,
+  scaleFactor: number
+): Electron.NativeImage {
+  const targetHeight = Math.round(customTrayIconSize * scaleFactor)
+
+  return icon.resize({ height: targetHeight, quality: 'best' })
+}
+
+function createMultiScaleTrayImage(icon: Electron.NativeImage): Electron.NativeImage {
+  const trayImage = nativeImage.createEmpty()
+
+  for (const scaleFactor of customTrayIconScaleFactors) {
+    const resizedIcon = resizeTrayImageForScale(icon, scaleFactor)
+    if (resizedIcon.isEmpty()) continue
+
+    trayImage.addRepresentation({
+      scaleFactor,
+      buffer: resizedIcon.toPNG()
+    })
+  }
+
+  if (!trayImage.isEmpty()) return trayImage
+
+  return resizeTrayImageForScale(icon, 1)
+}
+
+function createCustomTrayImage(customTrayIcon: string): TrayImage | null {
+  if (!customTrayIcon) return null
+
+  if (customTrayIcon.startsWith('data:image/')) {
+    const icon = nativeImage.createFromDataURL(customTrayIcon)
+    if (icon.isEmpty()) return null
+
+    return createMultiScaleTrayImage(icon)
+  }
+
+  if (!existsSync(customTrayIcon)) return null
+
+  const icon = nativeImage.createFromPath(customTrayIcon)
+  if (icon.isEmpty()) return null
+
+  const iconExt = extname(customTrayIcon).toLowerCase()
+  if (process.platform === 'win32' && iconExt === '.ico') {
+    return customTrayIcon
+  }
+  if (process.platform === 'linux') {
+    return customTrayIcon
+  }
+
+  return createMultiScaleTrayImage(icon)
+}
+
+async function updateTrayToolTip(
+  sysProxyEnabled?: boolean,
+  tunEnabled?: boolean,
+  customIconEnabled?: boolean
+): Promise<void> {
+  if (!tray) return
+
+  const [{ mode, tun }, appConfig] = await Promise.all([getControledMihomoConfig(), getAppConfig()])
+  const sysProxy = sysProxyEnabled ?? appConfig.sysProxy.enable
+  const tunStatus = tunEnabled ?? tun?.enable === true
+  const isCustomIcon = customIconEnabled ?? Boolean(appConfig.customTrayIcon)
+
+  const modeLabel =
+    mode === 'global'
+      ? t('tray.globalMode')
+      : mode === 'direct'
+        ? t('tray.directMode')
+        : t('tray.ruleMode')
+  const status = [
+    `${t('tray.tooltip.mode')}: ${modeLabel}`,
+    `${t('tray.systemProxy')}: ${sysProxy ? t('tray.tooltip.enabled') : t('tray.tooltip.disabled')}`,
+    `${t('tray.tun')}: ${tunStatus ? t('tray.tooltip.enabled') : t('tray.tooltip.disabled')}`
+  ]
+
+  if (isCustomIcon) {
+    status.push(t('tray.tooltip.customIcon'))
+  }
+
+  tray.setToolTip(['Clash Party', ...status].join('\n'))
+}
+
+function setTrayImage(iconPath: string): void {
+  if (!tray) return
+
+  if (process.platform === 'darwin') {
+    const icon = nativeImage.createFromPath(iconPath).resize({ height: 16 })
+    tray.setImage(icon)
+  } else if (process.platform === 'win32') {
+    tray.setImage(iconPath)
+  } else if (process.platform === 'linux') {
+    tray.setImage(iconPath)
+  }
+}
+
 export function updateTrayIconImmediate(sysProxyEnabled: boolean, tunEnabled: boolean): void {
   if (!tray) return
-  // macOS 流量显示开启时，由 trayIconUpdate 负责图标更新
-  if (process.platform === 'darwin' && macTrafficIconEnabled) return
 
   const status = calculateTrayIconStatus(sysProxyEnabled, tunEnabled)
   const iconPaths = getIconPaths()
 
-  getAppConfig().then(({ disableTrayIconColor = false }) => {
+  getAppConfig().then(async ({ disableTrayIconColor = false, customTrayIcon = '' }) => {
     if (!tray) return
-    if (process.platform === 'darwin' && macTrafficIconEnabled) return
-    const iconPath = disableTrayIconColor ? iconPaths.white : iconPaths[status]
     try {
-      if (process.platform === 'darwin') {
-        const icon = nativeImage.createFromPath(iconPath).resize({ height: 16 })
-        tray.setImage(icon)
-      } else if (process.platform === 'win32') {
-        tray.setImage(iconPath)
-      } else if (process.platform === 'linux') {
-        tray.setImage(iconPath)
+      const customIcon = createCustomTrayImage(customTrayIcon)
+      if (customIcon) {
+        tray.setImage(customIcon)
+        await updateTrayToolTip(sysProxyEnabled, tunEnabled, true)
+        return
       }
+      // macOS 流量显示开启时，由 trayIconUpdate 负责图标更新
+      if (process.platform === 'darwin' && macTrafficIconEnabled) {
+        await updateTrayToolTip(sysProxyEnabled, tunEnabled, false)
+        return
+      }
+      const iconPath = disableTrayIconColor ? iconPaths.white : iconPaths[status]
+      setTrayImage(iconPath)
+      await updateTrayToolTip(sysProxyEnabled, tunEnabled, false)
     } catch {
       // Failed to update tray icon
     }
@@ -574,23 +702,26 @@ export function updateTrayIconImmediate(sysProxyEnabled: boolean, tunEnabled: bo
 
 export async function updateTrayIcon(): Promise<void> {
   if (!tray) return
-  // macOS 流量显示开启时，由 trayIconUpdate 负责图标更新
-  if (process.platform === 'darwin' && macTrafficIconEnabled) return
 
-  const { disableTrayIconColor = false } = await getAppConfig()
+  const { disableTrayIconColor = false, customTrayIcon = '' } = await getAppConfig()
   const status = await getTrayIconStatus()
   const iconPaths = getIconPaths()
-  const iconPath = disableTrayIconColor ? iconPaths.white : iconPaths[status]
 
   try {
-    if (process.platform === 'darwin') {
-      const icon = nativeImage.createFromPath(iconPath).resize({ height: 16 })
-      tray.setImage(icon)
-    } else if (process.platform === 'win32') {
-      tray.setImage(iconPath)
-    } else if (process.platform === 'linux') {
-      tray.setImage(iconPath)
+    const customIcon = createCustomTrayImage(customTrayIcon)
+    if (customIcon) {
+      tray.setImage(customIcon)
+      await updateTrayToolTip(undefined, undefined, true)
+      return
     }
+    // macOS 流量显示开启时，由 trayIconUpdate 负责图标更新
+    if (process.platform === 'darwin' && macTrafficIconEnabled) {
+      await updateTrayToolTip(undefined, undefined, false)
+      return
+    }
+    const iconPath = disableTrayIconColor ? iconPaths.white : iconPaths[status]
+    setTrayImage(iconPath)
+    await updateTrayToolTip(undefined, undefined, false)
   } catch {
     // Failed to update tray icon
   }

@@ -1,5 +1,5 @@
 import { Worker } from 'worker_threads'
-import { createWriteStream, existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import { writeFile, rm, cp } from 'fs/promises'
 import http from 'http'
 import net from 'net'
@@ -12,6 +12,7 @@ import subStoreIcon from '../../../resources/subStoreIcon.png?asset'
 import { dataDir, mihomoWorkDir, subStoreDir, substoreLogPath } from '../utils/dirs'
 import { getAppConfig, getControledMihomoConfig } from '../config'
 import { systemLogger } from '../utils/logger'
+import { createCappedLogWritableStream } from '../utils/logFile'
 
 export let pacPort: number
 export let subStorePort: number
@@ -78,7 +79,11 @@ export async function startSubStoreFrontendServer(): Promise<void> {
   await stopSubStoreFrontendServer()
   subStoreFrontendPort = await findAvailablePort(14122)
   const app = express()
-  app.use(express.static(path.join(mihomoWorkDir(), 'sub-store-frontend')))
+  const frontendDir = path.join(mihomoWorkDir(), 'sub-store-frontend')
+  app.use(express.static(frontendDir))
+  app.use((_req, res) => {
+    res.sendFile(path.join(frontendDir, 'index.html'))
+  })
   subStoreFrontendServer = app.listen(subStoreFrontendPort, subStoreHost)
 }
 
@@ -105,8 +110,8 @@ export async function startSubStoreBackendServer(): Promise<void> {
     subStorePort = await findAvailablePort(38324)
     const icon = nativeImage.createFromPath(subStoreIcon)
     icon.toDataURL()
-    const stdout = createWriteStream(substoreLogPath(), { flags: 'a' })
-    const stderr = createWriteStream(substoreLogPath(), { flags: 'a' })
+    const stdout = createCappedLogWritableStream(substoreLogPath())
+    const stderr = createCappedLogWritableStream(substoreLogPath())
     const env = {
       SUB_STORE_BACKEND_API_PORT: subStorePort.toString(),
       SUB_STORE_BACKEND_API_HOST: subStoreHost,

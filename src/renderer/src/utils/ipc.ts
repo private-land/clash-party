@@ -37,7 +37,6 @@ interface IpcApi {
   mihomoUpgradeGeo: () => Promise<void>
   mihomoUpgrade: () => Promise<void>
   mihomoUpgradeUI: () => Promise<void>
-  mihomoUpgradeConfig: () => Promise<void>
   mihomoProxyDelay: (proxy: string, url?: string) => Promise<IMihomoDelay>
   mihomoGroupDelay: (group: string, url?: string) => Promise<IMihomoGroupDelay>
   patchMihomoConfig: (patch: Partial<IMihomoConfig>) => Promise<void>
@@ -84,11 +83,13 @@ interface IpcApi {
   getRuntimeConfigStr: () => Promise<string>
   getRuleStr: (id: string) => Promise<string>
   setRuleStr: (id: string, str: string) => Promise<void>
-  getFilePath: (ext: string[]) => Promise<string[] | undefined>
+  getFilePath: (ext: string[], title?: string, filterName?: string) => Promise<string[] | undefined>
   readTextFile: (filePath: string) => Promise<string>
+  readImageFileDataURL: (filePath: string) => Promise<string>
   openFile: (type: 'profile' | 'override', id: string, ext?: 'yaml' | 'js') => Promise<void>
   // Core
   restartCore: () => Promise<void>
+  mihomoHotReloadConfig: () => Promise<void>
   startMonitor: () => Promise<void>
   quitWithoutCore: () => Promise<void>
   // System
@@ -160,6 +161,8 @@ interface IpcApi {
   registerShortcut: (oldShortcut: string, newShortcut: string, action: string) => Promise<boolean>
   // Misc
   getGistUrl: () => Promise<string>
+  fetchIPInfo: (url: string) => Promise<unknown>
+  measureLatency: (url: string) => Promise<number | null>
   getImageDataURL: (url: string) => Promise<string>
   relaunchApp: () => Promise<void>
   quitApp: () => Promise<void>
@@ -192,7 +195,6 @@ export const {
   mihomoUpgradeGeo,
   mihomoUpgrade,
   mihomoUpgradeUI,
-  mihomoUpgradeConfig,
   mihomoProxyDelay,
   mihomoGroupDelay,
   patchMihomoConfig,
@@ -241,9 +243,11 @@ export const {
   setRuleStr,
   getFilePath,
   readTextFile,
+  readImageFileDataURL,
   openFile,
   // Core
   restartCore,
+  mihomoHotReloadConfig,
   startMonitor,
   quitWithoutCore,
   // System
@@ -312,6 +316,8 @@ export const {
   registerShortcut,
   // Misc
   getGistUrl,
+  fetchIPInfo,
+  measureLatency,
   getImageDataURL,
   relaunchApp,
   quitApp
@@ -363,7 +369,7 @@ export async function getAppName(appPath: string): Promise<string> {
   return invoke<string>('getAppName', appPath)
 }
 
-// getIconDataURL: 获取应用图标的Base64数据
+// getIconDataURL: 获取应用图标的 Base64 数据
 export async function getIconDataURL(appPath: string): Promise<string> {
   return invoke<string>('getIconDataURL', appPath)
 }

@@ -23,7 +23,6 @@ import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-c
 import { useTranslation } from 'react-i18next'
 
 const GROUP_EXPAND_STATE_KEY = 'proxy_group_expand_state'
-const SCROLL_POSITION_KEY = 'proxy_scroll_position'
 
 // 自定义 hook 用于管理展开状态
 const useProxyState = (
@@ -32,32 +31,8 @@ const useProxyState = (
   virtuosoRef: React.RefObject<GroupedVirtuosoHandle | null>
   isOpen: boolean[]
   setIsOpen: React.Dispatch<React.SetStateAction<boolean[]>>
-  initialTopMostItemIndex: number
-  handleRangeChanged: (range: { startIndex: number }) => void
 } => {
   const virtuosoRef = useRef<GroupedVirtuosoHandle | null>(null)
-
-  // 记住滚动位置
-  const [initialTopMostItemIndex] = useState<number>(() => {
-    try {
-      const savedPosition = sessionStorage.getItem(SCROLL_POSITION_KEY)
-      if (savedPosition) {
-        sessionStorage.removeItem(SCROLL_POSITION_KEY)
-        return parseInt(savedPosition, 10) || 0
-      }
-    } catch (error) {
-      console.error('Failed to restore scroll position:', error)
-    }
-    return 0
-  })
-
-  const handleRangeChanged = useCallback((range: { startIndex: number }) => {
-    try {
-      sessionStorage.setItem(SCROLL_POSITION_KEY, range.startIndex.toString())
-    } catch (error) {
-      console.error('Failed to save scroll position:', error)
-    }
-  }, [])
 
   // 初始化展开状态
   const [isOpen, setIsOpen] = useState<boolean[]>(() => {
@@ -101,9 +76,7 @@ const useProxyState = (
   return {
     virtuosoRef,
     isOpen,
-    setIsOpen,
-    initialTopMostItemIndex,
-    handleRangeChanged
+    setIsOpen
   }
 }
 
@@ -122,10 +95,10 @@ const Proxies: React.FC = () => {
   } = appConfig || {}
 
   const [cols, setCols] = useState(1)
-  const { virtuosoRef, isOpen, setIsOpen, initialTopMostItemIndex, handleRangeChanged } =
-    useProxyState(groups)
-  const [delaying, setDelaying] = useState(Array(groups.length).fill(false))
-  const [proxyDelaying, setProxyDelaying] = useState<Set<string>>(new Set())
+  const { virtuosoRef, isOpen, setIsOpen } = useProxyState(groups)
+  const [delaying, setDelaying] = useState<Set<string>[]>(() =>
+    Array.from({ length: groups.length }, () => new Set<string>())
+  )
   const [searchValue, setSearchValue] = useState(Array(groups.length).fill(''))
 
   // searchValue 初始化
@@ -134,6 +107,13 @@ const Proxies: React.FC = () => {
       setSearchValue(Array(groups.length).fill(''))
     }
   }, [groups.length, searchValue.length])
+
+  useEffect(() => {
+    setDelaying((prev) => {
+      if (prev.length === groups.length) return prev
+      return Array.from({ length: groups.length }, (_, i) => prev[i] ?? new Set<string>())
+    })
+  }, [groups.length])
 
   // 代理列表排序
   const sortProxies = useCallback((proxies: (IMihomoProxy | IMihomoGroup)[], order: string) => {
@@ -224,63 +204,68 @@ const Proxies: React.FC = () => {
           return newOpen
         })
       }
+      const proxyNames = allProxies[index].map((p) => p.name)
       setDelaying((prev) => {
-        const newDelaying = [...prev]
-        newDelaying[index] = true
-        return newDelaying
+        const next = [...prev]
+        next[index] = new Set(proxyNames)
+        return next
       })
 
-      // 管理测试状态
-      const groupProxies = allProxies[index]
-      setProxyDelaying((prev) => {
-        const newSet = new Set(prev)
-        groupProxies.forEach((proxy) => newSet.add(proxy.name))
-        return newSet
-      })
-
-      try {
-        // 限制并发数量
-        const result: Promise<void>[] = []
-        const runningList: Promise<void>[] = []
-        for (const proxy of allProxies[index]) {
-          const promise = Promise.resolve().then(async () => {
-            try {
-              await mihomoProxyDelay(proxy.name, groups[index].testUrl)
-            } catch {
-              // ignore
-            } finally {
-              // 更新状态
-              setProxyDelaying((prev) => {
-                const newSet = new Set(prev)
-                newSet.delete(proxy.name)
-                return newSet
-              })
-              mutate()
-            }
-          })
-          result.push(promise)
-          const running = promise.then(() => {
-            runningList.splice(runningList.indexOf(running), 1)
-          })
-          runningList.push(running)
-          if (runningList.length >= (delayTestConcurrency || 50)) {
-            await Promise.race(runningList)
+      // 限制并发数量
+      const result: Promise<void>[] = []
+      const runningList: Promise<void>[] = []
+      for (const proxy of allProxies[index]) {
+        const promise = Promise.resolve().then(async () => {
+          let res: IMihomoDelay | undefined
+          try {
+            res = await mihomoProxyDelay(proxy.name, groups[index].testUrl)
+          } catch {
+            // ignore
           }
+          mutate(
+            (current) => {
+              if (!current) return current
+              const group = current[index]
+              if (!group) return current
+              const next = [...current]
+              next[index] = {
+                ...group,
+                all: group.all.map((p) =>
+                  p.name === proxy.name
+                    ? {
+                        ...p,
+                        history: [
+                          ...p.history,
+                          { time: new Date().toISOString(), delay: res?.delay ?? 0 }
+                        ]
+                      }
+                    : p
+                )
+              }
+              return next
+            },
+            { revalidate: false }
+          )
+          setDelaying((prev) => {
+            const set = prev[index]
+            if (!set || !set.has(proxy.name)) return prev
+            const newSet = new Set(set)
+            newSet.delete(proxy.name)
+            const next = [...prev]
+            next[index] = newSet
+            return next
+          })
+        })
+        result.push(promise)
+        const running = promise.then(() => {
+          runningList.splice(runningList.indexOf(running), 1)
+        })
+        runningList.push(running)
+        if (runningList.length >= (delayTestConcurrency || 50)) {
+          await Promise.race(runningList)
         }
-        await Promise.all(result)
-      } finally {
-        setDelaying((prev) => {
-          const newDelaying = [...prev]
-          newDelaying[index] = false
-          return newDelaying
-        })
-        // 状态清理
-        setProxyDelaying((prev) => {
-          const newSet = new Set(prev)
-          groupProxies.forEach((proxy) => newSet.delete(proxy.name))
-          return newSet
-        })
       }
+      await Promise.all(result)
     },
     [allProxies, groups, delayTestConcurrency, mutate, setIsOpen]
   )
@@ -308,34 +293,20 @@ const Proxies: React.FC = () => {
     }
   }, [calcCols])
 
-  // 预加载图片
-  useEffect(() => {
-    const loadImages = async (): Promise<void> => {
-      const imagesToLoad: string[] = []
-      groups.forEach((group) => {
-        if (group.icon && group.icon.startsWith('http') && !localStorage.getItem(group.icon)) {
-          imagesToLoad.push(group.icon)
-        }
-      })
-
-      if (imagesToLoad.length > 0) {
-        const promises = imagesToLoad.map(async (url) => {
-          try {
-            const dataURL = await getImageDataURL(url)
-            localStorage.setItem(url, dataURL)
-          } catch (error) {
-            console.error('Failed to load image:', url, error)
-          }
-        })
-        await Promise.all(promises)
-        mutate()
-      }
-    }
-    loadImages()
-  }, [groups, mutate])
-
   const renderGroupContent = useCallback(
     (index: number) => {
+      if (
+        groups[index]?.icon &&
+        groups[index].icon.startsWith('http') &&
+        !localStorage.getItem(groups[index].icon)
+      ) {
+        getImageDataURL(groups[index].icon)
+          .then((dataURL) => {
+            localStorage.setItem(groups[index].icon, dataURL)
+            mutate()
+          })
+          .catch(() => {})
+      }
       return groups[index] ? (
         <div
           className={`w-full pt-2 ${index === groupCounts.length - 1 && !isOpen[index] ? 'pb-2' : ''} px-2`}
@@ -352,12 +323,12 @@ const Proxies: React.FC = () => {
               })
             }}
           >
-            <CardBody className="w-full">
-              <div className="flex justify-between">
-                <div className="flex text-ellipsis overflow-hidden whitespace-nowrap">
+            <CardBody className="w-full h-14">
+              <div className="flex justify-between h-full gap-3">
+                <div className="flex min-w-0 h-full text-ellipsis overflow-hidden whitespace-nowrap">
                   {groups[index].icon ? (
                     <Avatar
-                      className="bg-transparent mr-2"
+                      className="bg-transparent mr-2 shrink-0"
                       size="sm"
                       radius="sm"
                       src={
@@ -367,88 +338,90 @@ const Proxies: React.FC = () => {
                       }
                     />
                   ) : null}
-                  <div className="text-ellipsis overflow-hidden whitespace-nowrap">
-                    <div
-                      title={groups[index].name}
-                      className="inline flag-emoji h-[32px] text-md leading-[32px]"
-                    >
-                      {groups[index].name}
+                  <div className="flex min-w-0 flex-col h-full">
+                    <div className="text-ellipsis overflow-hidden whitespace-nowrap leading-tight text-md flex-5 flex items-center">
+                      <span title={groups[index].name} className="flag-emoji inline-block truncate">
+                        {groups[index].name}
+                      </span>
                     </div>
-                    {proxyDisplayMode === 'full' && (
-                      <div
-                        title={groups[index].type}
-                        className="inline ml-2 text-sm text-foreground-500"
+                    <div className="text-ellipsis overflow-hidden whitespace-nowrap text-[10px] text-foreground-500 leading-tight flex-3 flex items-center">
+                      <span>{groups[index].type}</span>
+                      <span
+                        title={groups[index].now}
+                        className="flag-emoji ml-1 inline-block truncate"
                       >
-                        {groups[index].type}
-                      </div>
-                    )}
-                    {proxyDisplayMode === 'full' && (
-                      <div className="inline flag-emoji ml-2 text-sm text-foreground-500">
                         {groups[index].now}
-                      </div>
-                    )}
+                      </span>
+                    </div>
                   </div>
                 </div>
-                <div className="flex">
-                  {proxyDisplayMode === 'full' && (
-                    <Chip size="sm" className="my-1 mr-2">
-                      {groups[index].all.length}
-                    </Chip>
-                  )}
-                  <CollapseInput
-                    title={t('proxies.search.placeholder')}
-                    value={searchValue[index]}
-                    onValueChange={(v) => {
-                      setSearchValue((prev) => {
-                        const newSearchValue = [...prev]
-                        newSearchValue[index] = v
-                        return newSearchValue
-                      })
-                    }}
-                  />
-                  <Button
-                    title={t('proxies.locate')}
-                    variant="light"
-                    size="sm"
-                    isIconOnly
-                    onPress={() => {
-                      if (!isOpen[index]) {
-                        setIsOpen((prev) => {
-                          const newOpen = [...prev]
-                          newOpen[index] = true
-                          return newOpen
+                <div className="flex items-center">
+                  <div
+                    className="flex items-center"
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    {proxyDisplayMode === 'full' && (
+                      <Chip size="sm" className="my-1 mr-2">
+                        {groups[index].all.length}
+                      </Chip>
+                    )}
+                    <CollapseInput
+                      title={t('proxies.search.placeholder')}
+                      value={searchValue[index]}
+                      onValueChange={(v) => {
+                        setSearchValue((prev) => {
+                          const newSearchValue = [...prev]
+                          newSearchValue[index] = v
+                          return newSearchValue
                         })
-                      }
-                      let i = 0
-                      for (let j = 0; j < index; j++) {
-                        i += groupCounts[j]
-                      }
-                      i += Math.floor(
-                        allProxies[index].findIndex((proxy) => proxy.name === groups[index].now) /
-                          cols
-                      )
-                      virtuosoRef.current?.scrollToIndex({
-                        index: Math.floor(i),
-                        align: 'start'
-                      })
-                    }}
-                  >
-                    <FaLocationCrosshairs className="text-lg text-foreground-500" />
-                  </Button>
-                  <Button
-                    title={t('proxies.delay.test')}
-                    variant="light"
-                    isLoading={delaying[index]}
-                    size="sm"
-                    isIconOnly
-                    onPress={() => {
-                      onGroupDelay(index)
-                    }}
-                  >
-                    <MdOutlineSpeed className="text-lg text-foreground-500" />
-                  </Button>
+                      }}
+                    />
+                    <Button
+                      title={t('proxies.locate')}
+                      variant="light"
+                      size="sm"
+                      isIconOnly
+                      onPress={() => {
+                        if (!isOpen[index]) {
+                          setIsOpen((prev) => {
+                            const newOpen = [...prev]
+                            newOpen[index] = true
+                            return newOpen
+                          })
+                        }
+                        let i = 0
+                        for (let j = 0; j < index; j++) {
+                          i += groupCounts[j]
+                        }
+                        i += Math.floor(
+                          allProxies[index].findIndex((proxy) => proxy.name === groups[index].now) /
+                            cols
+                        )
+                        virtuosoRef.current?.scrollToIndex({
+                          index: Math.floor(i),
+                          align: 'start'
+                        })
+                      }}
+                    >
+                      <FaLocationCrosshairs className="text-lg text-foreground-500" />
+                    </Button>
+                    <Button
+                      title={t('proxies.delay.test')}
+                      variant="light"
+                      isLoading={(delaying[index]?.size ?? 0) > 0}
+                      size="sm"
+                      isIconOnly
+                      onPress={() => {
+                        onGroupDelay(index)
+                      }}
+                    >
+                      <MdOutlineSpeed className="text-lg text-foreground-500" />
+                    </Button>
+                  </div>
                   <IoIosArrowBack
-                    className={`transition duration-200 ml-2 h-[32px] text-lg text-foreground-500 ${isOpen[index] ? '-rotate-90' : ''}`}
+                    className={`transition duration-200 ml-2 h-8 text-lg text-foreground-500 ${isOpen[index] ? '-rotate-90' : ''}`}
                   />
                 </div>
               </div>
@@ -464,13 +437,14 @@ const Proxies: React.FC = () => {
       groupCounts,
       isOpen,
       proxyDisplayMode,
+      t,
       searchValue,
       delaying,
-      cols,
-      allProxies,
-      virtuosoRef,
-      t,
+      mutate,
       setIsOpen,
+      allProxies,
+      cols,
+      virtuosoRef,
       onGroupDelay
     ]
   )
@@ -504,9 +478,10 @@ const Proxies: React.FC = () => {
                 selected={
                   allProxies[groupIndex][innerIndex * cols + i]?.name === groups[groupIndex].now
                 }
-                isGroupTesting={proxyDelaying.has(
-                  allProxies[groupIndex][innerIndex * cols + i].name
-                )}
+                isGroupTesting={
+                  delaying[groupIndex]?.has(allProxies[groupIndex][innerIndex * cols + i].name) ??
+                  false
+                }
               />
             )
           })}
@@ -522,7 +497,7 @@ const Proxies: React.FC = () => {
       cols,
       groups,
       proxyDisplayMode,
-      proxyDelaying,
+      delaying,
       mutate,
       onProxyDelay,
       onChangeProxy
@@ -613,8 +588,6 @@ const Proxies: React.FC = () => {
             defaultItemHeight={80}
             increaseViewportBy={{ top: 150, bottom: 150 }}
             overscan={200}
-            initialTopMostItemIndex={initialTopMostItemIndex}
-            rangeChanged={handleRangeChanged}
             computeItemKey={(index, groupIndex) => `${groupIndex}-${index}`}
             groupContent={renderGroupContent}
             itemContent={renderItemContent}

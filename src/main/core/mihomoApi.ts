@@ -1,3 +1,4 @@
+import { createConnection } from 'net'
 import axios, { AxiosInstance } from 'axios'
 import WebSocket from 'ws'
 import { getAppConfig, getControledMihomoConfig } from '../config'
@@ -6,23 +7,161 @@ import { tray } from '../resolve/tray'
 import { calcTraffic } from '../utils/calc'
 import { floatingWindow } from '../resolve/floatingWindow'
 import { createLogger } from '../utils/logger'
-import { getRuntimeConfig } from './factory'
+import { mihomoWorkConfigPath } from '../utils/dirs'
+import { generateProfile, getRuntimeConfig } from './factory'
 import { getMihomoIpcPath } from './manager'
 
 const mihomoApiLogger = createLogger('MihomoApi')
 
 let axiosIns: AxiosInstance | null = null
 let currentIpcPath: string = ''
-let mihomoTrafficWs: WebSocket | null = null
-let trafficRetry = 10
-let mihomoMemoryWs: WebSocket | null = null
-let memoryRetry = 10
-let mihomoLogsWs: WebSocket | null = null
-let logsRetry = 10
-let mihomoConnectionsWs: WebSocket | null = null
-let connectionsRetry = 10
 
 const MAX_RETRY = 10
+const RECONNECT_INTERVAL_MS = 1000
+
+interface MihomoStreamState {
+  ws: WebSocket | null
+  retry: number
+  active: boolean
+  generation: number
+  reconnectTimer: NodeJS.Timeout | null
+}
+
+const trafficStream: MihomoStreamState = {
+  ws: null,
+  retry: MAX_RETRY,
+  active: false,
+  generation: 0,
+  reconnectTimer: null
+}
+const memoryStream: MihomoStreamState = {
+  ws: null,
+  retry: MAX_RETRY,
+  active: false,
+  generation: 0,
+  reconnectTimer: null
+}
+const logsStream: MihomoStreamState = {
+  ws: null,
+  retry: MAX_RETRY,
+  active: false,
+  generation: 0,
+  reconnectTimer: null
+}
+const connectionsStream: MihomoStreamState = {
+  ws: null,
+  retry: MAX_RETRY,
+  active: false,
+  generation: 0,
+  reconnectTimer: null
+}
+
+function clearStreamReconnect(stream: MihomoStreamState): void {
+  if (!stream.reconnectTimer) return
+  clearTimeout(stream.reconnectTimer)
+  stream.reconnectTimer = null
+}
+
+function disposeStreamSocket(ws: WebSocket): void {
+  ws.onmessage = null
+  ws.onclose = null
+  ws.onerror = null
+  ws.removeAllListeners()
+
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.close()
+  } else if (ws.readyState === WebSocket.CONNECTING) {
+    ws.terminate()
+  }
+}
+
+function activateStream(stream: MihomoStreamState): void {
+  stream.active = true
+  stream.retry = MAX_RETRY
+  clearStreamReconnect(stream)
+}
+
+function stopStream(stream: MihomoStreamState): void {
+  stream.active = false
+  stream.retry = 0
+  stream.generation++
+  clearStreamReconnect(stream)
+
+  const ws = stream.ws
+  stream.ws = null
+  if (ws) {
+    disposeStreamSocket(ws)
+  }
+}
+
+function beginStreamConnection(stream: MihomoStreamState): number | null {
+  if (!stream.active) return null
+
+  stream.generation++
+  clearStreamReconnect(stream)
+
+  const ws = stream.ws
+  stream.ws = null
+  if (ws) {
+    disposeStreamSocket(ws)
+  }
+
+  return stream.generation
+}
+
+function isCurrentStream(stream: MihomoStreamState, generation: number): boolean {
+  return stream.active && stream.generation === generation
+}
+
+function scheduleStreamReconnect(
+  stream: MihomoStreamState,
+  generation: number,
+  connect: () => Promise<void>
+): void {
+  if (!isCurrentStream(stream, generation) || stream.retry <= 0) return
+
+  stream.retry--
+  clearStreamReconnect(stream)
+  stream.reconnectTimer = setTimeout(() => {
+    stream.reconnectTimer = null
+    if (isCurrentStream(stream, generation)) {
+      void connect()
+    }
+  }, RECONNECT_INTERVAL_MS)
+}
+
+function closeErroredStreamSocket(
+  stream: MihomoStreamState,
+  generation: number,
+  ws: WebSocket
+): void {
+  if (!isCurrentStream(stream, generation)) return
+
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.close()
+  } else if (ws.readyState === WebSocket.CONNECTING) {
+    ws.terminate()
+  }
+}
+
+function createMihomoWebSocket(endpoint: string): {
+  ws: WebSocket
+  ipcPath: string
+  wsUrl: string
+} {
+  const ipcPath = getMihomoIpcPath()
+  const wsUrl = `ws://localhost${endpoint}`
+
+  // Keep the named pipe path out of ws+unix URLs. URL parsing percent-encodes
+  // non-ASCII Windows usernames, which changes the pipe name before ws connects.
+  const createIpcConnection = (() => createConnection({ path: ipcPath })) as typeof createConnection
+
+  return {
+    ws: new WebSocket(wsUrl, { createConnection: createIpcConnection }),
+    ipcPath,
+    wsUrl
+  }
+}
 
 export const getAxios = async (force: boolean = false): Promise<AxiosInstance> => {
   const dynamicIpcPath = getMihomoIpcPath()
@@ -169,7 +308,7 @@ export const mihomoProxyDelay = async (proxy: string, url?: string): Promise<IMi
   const instance = await getAxios()
   return await instance.get(`/proxies/${encodeURIComponent(proxy)}/delay`, {
     params: {
-      url: url || delayTestUrl || 'https://www.gstatic.com/generate_204',
+      url: delayTestUrl || url || 'https://www.gstatic.com/generate_204',
       timeout: delayTestTimeout || 5000
     }
   })
@@ -181,7 +320,7 @@ export const mihomoGroupDelay = async (group: string, url?: string): Promise<IMi
   const instance = await getAxios()
   return await instance.get(`/group/${encodeURIComponent(group)}/delay`, {
     params: {
-      url: url || delayTestUrl || 'https://www.gstatic.com/generate_204',
+      url: delayTestUrl || url || 'https://www.gstatic.com/generate_204',
       timeout: delayTestTimeout || 5000
     }
   })
@@ -189,7 +328,7 @@ export const mihomoGroupDelay = async (group: string, url?: string): Promise<IMi
 
 export const mihomoUpgrade = async (): Promise<void> => {
   const instance = await getAxios()
-  return await instance.post('/upgrade')
+  return await instance.post('/upgrade', undefined, { timeout: 90000 })
 }
 
 export const mihomoUpgradeUI = async (): Promise<void> => {
@@ -197,31 +336,15 @@ export const mihomoUpgradeUI = async (): Promise<void> => {
   return await instance.post('/upgrade/ui')
 }
 
-export const mihomoUpgradeConfig = async (): Promise<void> => {
-  mihomoApiLogger.info('mihomoUpgradeConfig called')
-
-  try {
-    const instance = await getAxios()
-    mihomoApiLogger.info('axios instance obtained')
-    const { diffWorkDir = false } = await getAppConfig()
-    const { current } = await import('../config').then((mod) => mod.getProfileConfig(true))
-    const { mihomoWorkConfigPath } = await import('../utils/dirs')
-    const configPath = diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work')
-    mihomoApiLogger.info(`config path: ${configPath}`)
-    const { existsSync } = await import('fs')
-    if (!existsSync(configPath)) {
-      mihomoApiLogger.info('config file does not exist, generating...')
-      const { generateProfile } = await import('./factory')
-      await generateProfile()
-    }
-    const response = await instance.put('/configs?force=true', {
-      path: configPath
-    })
-    mihomoApiLogger.info(`config upgrade request completed ${response?.status || 'no status'}`)
-  } catch (error) {
-    mihomoApiLogger.error('Failed to upgrade config', error)
-    throw error
-  }
+export const mihomoHotReloadConfig = async (): Promise<void> => {
+  mihomoApiLogger.info('mihomoHotReloadConfig called')
+  const current = await generateProfile()
+  const { diffWorkDir = false } = await getAppConfig()
+  const configPath = diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work')
+  mihomoApiLogger.info(`hot reload config path: ${configPath}`)
+  const instance = await getAxios()
+  await instance.put('/configs?force=true', { path: configPath })
+  mihomoApiLogger.info('hot reload config completed')
 }
 
 // Smart 内核 API
@@ -242,33 +365,29 @@ export const mihomoSmartFlushCache = async (configName?: string): Promise<void> 
 }
 
 export const startMihomoTraffic = async (): Promise<void> => {
-  trafficRetry = MAX_RETRY
+  activateStream(trafficStream)
   await mihomoTraffic()
 }
 
 export const stopMihomoTraffic = (): void => {
-  trafficRetry = 0
-
-  if (mihomoTrafficWs) {
-    mihomoTrafficWs.removeAllListeners()
-    if (mihomoTrafficWs.readyState === WebSocket.OPEN) {
-      mihomoTrafficWs.close()
-    }
-    mihomoTrafficWs = null
-  }
+  stopStream(trafficStream)
 }
 
 const mihomoTraffic = async (): Promise<void> => {
-  const dynamicIpcPath = getMihomoIpcPath()
-  const wsUrl = `ws+unix:${dynamicIpcPath}:/traffic`
+  const generation = beginStreamConnection(trafficStream)
+  if (generation === null) return
 
-  mihomoApiLogger.info(`Creating traffic WebSocket with URL: ${wsUrl}`)
-  mihomoTrafficWs = new WebSocket(wsUrl)
+  const { ws, ipcPath, wsUrl } = createMihomoWebSocket('/traffic')
 
-  mihomoTrafficWs.onmessage = async (e): Promise<void> => {
+  mihomoApiLogger.info(`Creating traffic WebSocket with URL: ${wsUrl}, IPC path: ${ipcPath}`)
+  trafficStream.ws = ws
+
+  ws.onmessage = async (e): Promise<void> => {
+    if (!isCurrentStream(trafficStream, generation)) return
+
     const data = e.data as string
     const json = JSON.parse(data) as IMihomoTrafficInfo
-    trafficRetry = MAX_RETRY
+    trafficStream.retry = MAX_RETRY
     try {
       mainWindow?.webContents.send('mihomoTraffic', json)
       if (process.platform !== 'linux') {
@@ -285,47 +404,39 @@ const mihomoTraffic = async (): Promise<void> => {
     }
   }
 
-  mihomoTrafficWs.onclose = (): void => {
-    if (trafficRetry) {
-      trafficRetry--
-      setTimeout(mihomoTraffic, 1000)
-    }
+  ws.onclose = (): void => {
+    if (!isCurrentStream(trafficStream, generation)) return
+    trafficStream.ws = null
+    scheduleStreamReconnect(trafficStream, generation, mihomoTraffic)
   }
 
-  mihomoTrafficWs.onerror = (error): void => {
+  ws.onerror = (error): void => {
     mihomoApiLogger.error('Traffic WebSocket error', error)
-    if (mihomoTrafficWs) {
-      mihomoTrafficWs.close()
-      mihomoTrafficWs = null
-    }
+    closeErroredStreamSocket(trafficStream, generation, ws)
   }
 }
 
 export const startMihomoMemory = async (): Promise<void> => {
-  memoryRetry = MAX_RETRY
+  activateStream(memoryStream)
   await mihomoMemory()
 }
 
 export const stopMihomoMemory = (): void => {
-  memoryRetry = 0
-
-  if (mihomoMemoryWs) {
-    mihomoMemoryWs.removeAllListeners()
-    if (mihomoMemoryWs.readyState === WebSocket.OPEN) {
-      mihomoMemoryWs.close()
-    }
-    mihomoMemoryWs = null
-  }
+  stopStream(memoryStream)
 }
 
 const mihomoMemory = async (): Promise<void> => {
-  const dynamicIpcPath = getMihomoIpcPath()
-  const wsUrl = `ws+unix:${dynamicIpcPath}:/memory`
-  mihomoMemoryWs = new WebSocket(wsUrl)
+  const generation = beginStreamConnection(memoryStream)
+  if (generation === null) return
 
-  mihomoMemoryWs.onmessage = (e): void => {
+  const { ws } = createMihomoWebSocket('/memory')
+  memoryStream.ws = ws
+
+  ws.onmessage = (e): void => {
+    if (!isCurrentStream(memoryStream, generation)) return
+
     const data = e.data as string
-    memoryRetry = MAX_RETRY
+    memoryStream.retry = MAX_RETRY
     try {
       mainWindow?.webContents.send('mihomoMemory', JSON.parse(data) as IMihomoMemoryInfo)
     } catch {
@@ -333,48 +444,40 @@ const mihomoMemory = async (): Promise<void> => {
     }
   }
 
-  mihomoMemoryWs.onclose = (): void => {
-    if (memoryRetry) {
-      memoryRetry--
-      setTimeout(mihomoMemory, 1000)
-    }
+  ws.onclose = (): void => {
+    if (!isCurrentStream(memoryStream, generation)) return
+    memoryStream.ws = null
+    scheduleStreamReconnect(memoryStream, generation, mihomoMemory)
   }
 
-  mihomoMemoryWs.onerror = (): void => {
-    if (mihomoMemoryWs) {
-      mihomoMemoryWs.close()
-      mihomoMemoryWs = null
-    }
+  ws.onerror = (): void => {
+    closeErroredStreamSocket(memoryStream, generation, ws)
   }
 }
 
 export const startMihomoLogs = async (): Promise<void> => {
-  logsRetry = MAX_RETRY
+  activateStream(logsStream)
   await mihomoLogs()
 }
 
 export const stopMihomoLogs = (): void => {
-  logsRetry = 0
-
-  if (mihomoLogsWs) {
-    mihomoLogsWs.removeAllListeners()
-    if (mihomoLogsWs.readyState === WebSocket.OPEN) {
-      mihomoLogsWs.close()
-    }
-    mihomoLogsWs = null
-  }
+  stopStream(logsStream)
 }
 
 const mihomoLogs = async (): Promise<void> => {
+  const generation = beginStreamConnection(logsStream)
+  if (generation === null) return
+
   const { 'log-level': logLevel = 'info' } = await getControledMihomoConfig()
-  const dynamicIpcPath = getMihomoIpcPath()
-  const wsUrl = `ws+unix:${dynamicIpcPath}:/logs?level=${logLevel}`
 
-  mihomoLogsWs = new WebSocket(wsUrl)
+  const { ws } = createMihomoWebSocket(`/logs?level=${logLevel}`)
+  logsStream.ws = ws
 
-  mihomoLogsWs.onmessage = (e): void => {
+  ws.onmessage = (e): void => {
+    if (!isCurrentStream(logsStream, generation)) return
+
     const data = e.data as string
-    logsRetry = MAX_RETRY
+    logsStream.retry = MAX_RETRY
     try {
       mainWindow?.webContents.send('mihomoLogs', JSON.parse(data) as IMihomoLogInfo)
     } catch {
@@ -382,46 +485,38 @@ const mihomoLogs = async (): Promise<void> => {
     }
   }
 
-  mihomoLogsWs.onclose = (): void => {
-    if (logsRetry) {
-      logsRetry--
-      setTimeout(mihomoLogs, 1000)
-    }
+  ws.onclose = (): void => {
+    if (!isCurrentStream(logsStream, generation)) return
+    logsStream.ws = null
+    scheduleStreamReconnect(logsStream, generation, mihomoLogs)
   }
 
-  mihomoLogsWs.onerror = (): void => {
-    if (mihomoLogsWs) {
-      mihomoLogsWs.close()
-      mihomoLogsWs = null
-    }
+  ws.onerror = (): void => {
+    closeErroredStreamSocket(logsStream, generation, ws)
   }
 }
 
 export const startMihomoConnections = async (): Promise<void> => {
-  connectionsRetry = MAX_RETRY
+  activateStream(connectionsStream)
   await mihomoConnections()
 }
 
 export const stopMihomoConnections = (): void => {
-  connectionsRetry = 0
-
-  if (mihomoConnectionsWs) {
-    mihomoConnectionsWs.removeAllListeners()
-    if (mihomoConnectionsWs.readyState === WebSocket.OPEN) {
-      mihomoConnectionsWs.close()
-    }
-    mihomoConnectionsWs = null
-  }
+  stopStream(connectionsStream)
 }
 
 const mihomoConnections = async (): Promise<void> => {
-  const dynamicIpcPath = getMihomoIpcPath()
-  const wsUrl = `ws+unix:${dynamicIpcPath}:/connections`
-  mihomoConnectionsWs = new WebSocket(wsUrl)
+  const generation = beginStreamConnection(connectionsStream)
+  if (generation === null) return
 
-  mihomoConnectionsWs.onmessage = (e): void => {
+  const { ws } = createMihomoWebSocket('/connections')
+  connectionsStream.ws = ws
+
+  ws.onmessage = (e): void => {
+    if (!isCurrentStream(connectionsStream, generation)) return
+
     const data = e.data as string
-    connectionsRetry = MAX_RETRY
+    connectionsStream.retry = MAX_RETRY
     try {
       mainWindow?.webContents.send('mihomoConnections', JSON.parse(data) as IMihomoConnectionsInfo)
     } catch {
@@ -429,18 +524,14 @@ const mihomoConnections = async (): Promise<void> => {
     }
   }
 
-  mihomoConnectionsWs.onclose = (): void => {
-    if (connectionsRetry) {
-      connectionsRetry--
-      setTimeout(mihomoConnections, 1000)
-    }
+  ws.onclose = (): void => {
+    if (!isCurrentStream(connectionsStream, generation)) return
+    connectionsStream.ws = null
+    scheduleStreamReconnect(connectionsStream, generation, mihomoConnections)
   }
 
-  mihomoConnectionsWs.onerror = (): void => {
-    if (mihomoConnectionsWs) {
-      mihomoConnectionsWs.close()
-      mihomoConnectionsWs = null
-    }
+  ws.onerror = (): void => {
+    closeErroredStreamSocket(connectionsStream, generation, ws)
   }
 }
 

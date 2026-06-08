@@ -1,10 +1,9 @@
 import { Button, Card, CardBody, CardFooter, Tooltip } from '@heroui/react'
 import { toast } from '@renderer/components/base/toast'
-import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
 import BorderSwitch from '@renderer/components/base/border-swtich'
 import { LuServer } from 'react-icons/lu'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { restartCore } from '@renderer/utils/ipc'
+import { mihomoHotReloadConfig } from '@renderer/utils/ipc'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
@@ -26,7 +25,6 @@ const DNSCard: React.FC<Props> = (props) => {
   const location = useLocation()
   const navigate = useNavigate()
   const match = location.pathname.includes('/dns')
-  const { patchControledMihomoConfig } = useControledMihomoConfig()
   const {
     attributes,
     listeners,
@@ -41,8 +39,7 @@ const DNSCard: React.FC<Props> = (props) => {
   const onChange = async (controlDns: boolean): Promise<void> => {
     try {
       await patchAppConfig({ controlDns })
-      await patchControledMihomoConfig({})
-      await restartCore()
+      await mihomoHotReloadConfig()
     } catch (e) {
       toast.error(String(e))
     }

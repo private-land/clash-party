@@ -16,6 +16,10 @@ export interface RequestOptions {
   followRedirect?: boolean
   maxRedirects?: number
   onProgress?: (loaded: number, total: number) => void
+  /** Number of retry attempts for failed requests (default: 0) */
+  retry?: number
+  /** Delay in ms between retries (default: 1000) */
+  retryDelay?: number
 }
 
 export interface Response<T = unknown> {

@@ -1,7 +1,13 @@
-import { writeFile } from 'fs/promises'
 import { logPath } from './dirs'
+import { appendToFileWithLimit } from './logFile'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+let appLogDisabled = false
+
+export function setAppLogDisabled(value: boolean): void {
+  appLogDisabled = value === true
+}
 
 class Logger {
   private moduleName: string
@@ -21,10 +27,11 @@ class Logger {
   }
 
   private async writeToFile(level: LogLevel, message: string, error?: unknown): Promise<void> {
+    if (appLogDisabled) return
     try {
       const appLogPath = logPath()
       const logMessage = this.formatLogMessage(level, message, error)
-      await writeFile(appLogPath, logMessage, { flag: 'a' })
+      await appendToFileWithLimit(appLogPath, logMessage)
     } catch (logError) {
       // 如果写入日志文件失败，仍然输出到控制台
       console.error(`[Logger] Failed to write to log file:`, logError)

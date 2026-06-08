@@ -9,22 +9,31 @@ export function isPortable(): boolean {
   return existsSync(path.join(exeDir(), 'PORTABLE'))
 }
 
+function portableDataDir(): string {
+  return path.join(exeDir(), 'data')
+}
+
+export function configurePortableUserData(): void {
+  if (isPortable()) {
+    app.setPath('userData', portableDataDir())
+  }
+}
+
 export function dataDir(): string {
   if (isPortable()) {
-    return path.join(exeDir(), 'data')
+    return portableDataDir()
   } else {
     return app.getPath('userData')
   }
 }
 
 export function taskDir(): string {
-  const userDataDir = app.getPath('userData')
-  // 确保 userData 目录存在
-  if (!existsSync(userDataDir)) {
-    mkdirSync(userDataDir, { recursive: true })
+  const baseDir = dataDir()
+  if (!existsSync(baseDir)) {
+    mkdirSync(baseDir, { recursive: true })
   }
 
-  const dir = path.join(userDataDir, 'tasks')
+  const dir = path.join(baseDir, 'tasks')
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
   }

@@ -12,13 +12,11 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
   const { type, payload, proxy, index: listIndex, extra } = props
   const ruleIndex = props.index ?? listIndex
 
-  const { disabled, hitCount, hitAt, missCount, missAt } = extra
-
-  const [isEnabled, setIsEnabled] = useState(!disabled)
+  const [isEnabled, setIsEnabled] = useState(!extra?.disabled)
 
   useEffect(() => {
-    setIsEnabled(!disabled)
-  }, [disabled])
+    setIsEnabled(!extra?.disabled)
+  }, [extra?.disabled])
 
   const handleToggle = async (v: boolean): Promise<void> => {
     setIsEnabled(v)
@@ -30,20 +28,16 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
     }
   }
 
-  const totalCount = hitCount + missCount
-  const hitRate = totalCount > 0 ? (hitCount / totalCount) * 100 : 0
-
   const formatRelativeTime = (timestamp: string): string => {
-    const now = Date.now()
     const time = new Date(timestamp).getTime()
+    if (time === 0) return t('rules.hitAt.never')
+    const now = Date.now()
     const diff = Math.floor((now - time) / 1000)
     if (diff < 60) return t('rules.hitAt.seconds')
     if (diff < 3600) return t('rules.hitAt.minutes', { count: Math.floor(diff / 60) })
     if (diff < 86400) return t('rules.hitAt.hours', { count: Math.floor(diff / 3600) })
     return t('rules.hitAt.days', { count: Math.floor(diff / 86400) })
   }
-
-  const hasStats = totalCount > 0
 
   return (
     <div className={`w-full px-2 pb-2 ${listIndex === 0 ? 'pt-2' : ''}`}>
@@ -66,30 +60,34 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
                   </Chip>
                 </div>
               </div>
-
-              {/* 统计信息 */}
-              {hasStats && (
-                <div className="flex items-center gap-3 text-xs shrink-0">
-                  <span className="text-foreground-500 whitespace-nowrap">
-                    {formatRelativeTime(hitAt || missAt)}
-                  </span>
-                  <span className="text-foreground-600 font-medium whitespace-nowrap">
-                    {hitCount}/{totalCount}
-                  </span>
-                  <Chip size="sm" variant="flat" color="primary" className="text-xs">
-                    {hitRate.toFixed(1)}%
-                  </Chip>
-                </div>
-              )}
             </div>
 
-            {/* 右侧开关 */}
-            <Switch
-              size="sm"
-              isSelected={isEnabled}
-              onValueChange={handleToggle}
-              aria-label="Toggle rule"
-            />
+            {extra &&
+              (() => {
+                const total = extra.hitCount + extra.missCount
+                const rate = total > 0 ? (extra.hitCount / total) * 100 : 0
+                return (
+                  <>
+                    <div className="flex items-center gap-3 text-xs shrink-0">
+                      <span className="text-foreground-500 whitespace-nowrap">
+                        {formatRelativeTime(extra.hitAt || extra.missAt)}
+                      </span>
+                      <span className="text-foreground-600 font-medium whitespace-nowrap">
+                        {extra.hitCount}/{total}
+                      </span>
+                      <Chip size="sm" variant="flat" color="primary" className="text-xs">
+                        {rate.toFixed(1)}%
+                      </Chip>
+                    </div>
+                    <Switch
+                      size="sm"
+                      isSelected={isEnabled}
+                      onValueChange={handleToggle}
+                      aria-label="Toggle rule"
+                    />
+                  </>
+                )
+              })()}
           </div>
         </CardBody>
       </Card>

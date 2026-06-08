@@ -3,7 +3,7 @@ type LogLevel = 'info' | 'debug' | 'warning' | 'error' | 'silent'
 type SysProxyMode = 'auto' | 'manual'
 type CardStatus = 'col-span-2' | 'col-span-1' | 'hidden'
 type AppTheme = 'system' | 'light' | 'dark'
-type MihomoGroupType = 'Selector' | 'URLTest' | 'LoadBalance' | 'Relay'
+type MihomoGroupType = 'Selector' | 'URLTest' | 'Fallback' | 'LoadBalance' | 'Relay'
 type Priority =
   | 'PRIORITY_LOW'
   | 'PRIORITY_BELOW_NORMAL'
@@ -31,12 +31,16 @@ type MihomoProxyType =
   | 'Hysteria2'
   | 'Tuic'
   | 'WireGuard'
-  | 'Anytls'
+  | 'AnyTLS'
   | 'MultiProtocol'
+  | 'Mieru'
+  | 'Sudoku'
+  | 'Masque'
+  | 'TrustTunnel'
 type TunStack = 'gvisor' | 'mixed' | 'system'
 type FindProcessMode = 'off' | 'strict' | 'always'
-type DnsMode = 'normal' | 'fake-ip' | 'redir-host'
-type FilterMode = 'blacklist' | 'whitelist'
+type DnsMode = 'normal' | 'fake-ip' | 'redir-host' | 'hosts'
+type FilterMode = 'blacklist' | 'whitelist' | 'rule'
 type NetworkInterfaceInfo = os.NetworkInterfaceInfo
 
 interface IAppVersion {
@@ -75,7 +79,7 @@ interface IMihomoRulesDetail {
   proxy: string
   size: number
   index: number
-  extra: {
+  extra?: {
     disabled: boolean
     hitCount: number
     hitAt: string
@@ -126,6 +130,7 @@ interface IMihomoConnectionDetail {
   download: number
   start: string
   chains: string[]
+  providerChains: string[]
   rule: string
   rulePayload: string
 }
@@ -151,9 +156,14 @@ interface IMihomoProxy {
   tfo: boolean
   type: MihomoProxyType
   udp: boolean
+  uot: boolean
   xudp: boolean
   mptcp: boolean
   smux: boolean
+  interface?: string
+  'routing-mark'?: number
+  'provider-name'?: string
+  'dialer-proxy'?: string
 }
 
 interface IMihomoGroup {
@@ -161,6 +171,7 @@ interface IMihomoGroup {
   all: string[]
   extra: Record<string, { alive: boolean; history: IMihomoHistory[] }>
   testUrl?: string
+  expectedStatus?: string
   fixed?: string
   hidden: boolean
   history: IMihomoHistory[]
@@ -193,6 +204,7 @@ interface IMihomoRuleProvider {
   type: string
   updatedAt: string
   vehicleType: string
+  payload?: string[]
 }
 
 interface IMihomoProxyProviders {
@@ -225,6 +237,11 @@ interface ISysProxyConfig {
   pacScript?: string
 }
 
+interface INetworkLatencyTarget {
+  name: string
+  url: string
+}
+
 interface IAppConfig {
   core: 'mihomo' | 'mihomo-alpha' | 'mihomo-smart' | 'mihomo-specific'
   specificVersion?: string
@@ -247,6 +264,8 @@ interface IAppConfig {
   connectionTableColumnWidths?: Record<string, number>
   connectionTableSortColumn?: string
   connectionTableSortDirection?: 'asc' | 'desc'
+  displayIcon?: boolean
+  displayAppName?: boolean
   spinFloatingIcon?: boolean
   disableTray?: boolean
   swapTrayClick?: boolean
@@ -258,16 +277,20 @@ interface IAppConfig {
   logCardStatus?: CardStatus
   hideConnectionCardWave?: boolean
   pauseSSID?: string[]
+  disableDnsOnPauseSSID?: boolean
+  controlDnsBeforePause?: boolean
   mihomoCoreCardStatus?: CardStatus
   overrideCardStatus?: CardStatus
   profileCardStatus?: CardStatus
   proxyCardStatus?: CardStatus
+  networkCardStatus?: CardStatus
   resourceCardStatus?: CardStatus
   ruleCardStatus?: CardStatus
   sniffCardStatus?: CardStatus
   substoreCardStatus?: CardStatus
   sysproxyCardStatus?: CardStatus
   tunCardStatus?: CardStatus
+  usageCardStatus?: CardStatus
   githubToken?: string
   useSubStore: boolean
   subStoreHost?: string
@@ -286,19 +309,25 @@ interface IAppConfig {
   useWindowFrame: boolean
   proxyInTray: boolean
   showCurrentProxyInTray: boolean
+  enableTrafficLogger?: boolean
   siderOrder: string[]
   siderWidth: number
   appTheme: AppTheme
   customTheme?: string
   autoCheckUpdate: boolean
+  githubProxy?: string
   silentStart: boolean
   autoCloseConnection: boolean
   sysProxy: ISysProxyConfig
   maxLogDays: number
+  maxLogFileSize: number
+  disableAppLog?: boolean
   userAgent?: string
   delayTestConcurrency?: number
   delayTestUrl?: string
   delayTestTimeout?: number
+  networkLatencyTargets?: INetworkLatencyTarget[]
+  networkIPProvider?: 'ip.sb' | 'ipwho.is' | 'ipapi.is'
   subscriptionTimeout?: number
   encryptedPassword?: number[]
   controlDns?: boolean
@@ -306,6 +335,7 @@ interface IAppConfig {
   useDockIcon?: boolean
   showTraffic?: boolean
   disableTrayIconColor?: boolean
+  customTrayIcon?: string
   trayProxyGroupStyle?: 'default' | 'submenu'
   disableAnimations?: boolean
   webdavUrl?: string
@@ -326,6 +356,7 @@ interface IAppConfig {
   directModeShortcut?: string
   restartAppShortcut?: string
   quitWithoutCoreShortcut?: string
+  copyEnvShortcut?: string
   language?: 'zh-CN' | 'zh-TW' | 'en-US' | 'ru-RU' | 'fa-IR'
   triggerMainWindowBehavior?: 'show' | 'toggle'
   showMixedPort?: number
@@ -339,6 +370,8 @@ interface IAppConfig {
   showTproxyPort?: number
   enableTproxyPort?: boolean
   testProfileOnStart?: boolean
+  useHotReloadProfile?: boolean
+  hotReloadProfileAutoCloseConnection?: boolean
 }
 
 interface IMihomoTunConfig {
@@ -507,6 +540,7 @@ interface IProfileItem {
   allowFixedInterval?: boolean
   autoUpdate?: boolean
   authToken?: string
+  userAgent?: string
   updateTimeout?: number
 }
 

@@ -3,7 +3,7 @@ import { readFile, rm, writeFile } from 'fs/promises'
 import { promisify } from 'util'
 import path from 'path'
 import os from 'os'
-import { createWriteStream, existsSync } from 'fs'
+import { existsSync } from 'fs'
 import chokidar, { FSWatcher } from 'chokidar'
 import { app, ipcMain } from 'electron'
 import { mainWindow } from '../window'
@@ -25,9 +25,10 @@ import {
 } from '../utils/dirs'
 import { uploadRuntimeConfig } from '../resolve/gistApi'
 import { startMonitor } from '../resolve/trafficMonitor'
-import { safeShowErrorBox } from '../utils/init'
+import { ensureRuntimeFiles, safeShowErrorBox } from '../utils/init'
 import i18next from '../../shared/i18n'
 import { managerLogger } from '../utils/logger'
+import { createCappedLogWritableStream } from '../utils/logFile'
 import {
   startMihomoTraffic,
   startMihomoConnections,
@@ -41,7 +42,11 @@ import {
   getAxios
 } from './mihomoApi'
 import { generateProfile } from './factory'
-import { getSessionAdminStatus } from './permissions'
+import {
+  checkAdminRestartForTun as checkAdminRestartForTunWithRestart,
+  getSessionAdminStatus,
+  setStopCoreBeforeAdminRestart
+} from './permissions'
 import {
   cleanupSocketFile,
   cleanupWindowsNamedPipes,
@@ -72,12 +77,16 @@ const execFilePromise = promisify(execFile)
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
 
 // 核心进程状态
-let child: ChildProcess
+let child: ChildProcess | null = null
 let retry = 10
 let isRestarting = false
 
 // 文件监听器
 let coreWatcher: FSWatcher | null = null
+
+function hasCoreProcess(): boolean {
+  return Boolean(child && !child.killed && child.exitCode === null && child.signalCode === null)
+}
 
 // 初始化核心文件监听
 export function initCoreWatcher(): void {
@@ -93,6 +102,13 @@ export function initCoreWatcher(): void {
     } catch (e) {
       safeShowErrorBox('mihomo.error.coreStartFailed', `${e}`)
     }
+  })
+
+  // 监听 restartCore 事件（用于 DNS 状态恢复等场景，避免循环依赖）
+  ipcMain.removeAllListeners('restartCore')
+  ipcMain.on('restartCore', async () => {
+    await restartCore()
+    mainWindow?.webContents.send('appConfigUpdated')
   })
 }
 
@@ -125,6 +141,7 @@ export const getMihomoIpcPath = (): string => {
 interface CoreConfig {
   corePath: string
   workDir: string
+  safePath?: string
   ipcPath: string
   logLevel: LogLevel
   tunEnabled: boolean
@@ -133,8 +150,21 @@ interface CoreConfig {
   detached: boolean
 }
 
+function buildCoreEnv(safePath?: string): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  if (!safePath) return env
+
+  const existingSafePaths = env.SAFE_PATHS?.split(path.delimiter).filter(Boolean) ?? []
+  env.SAFE_PATHS = existingSafePaths.includes(safePath)
+    ? existingSafePaths.join(path.delimiter)
+    : [...existingSafePaths, safePath].join(path.delimiter)
+  return env
+}
+
 // 准备核心配置
 async function prepareCore(detached: boolean, skipStop = false): Promise<CoreConfig> {
+  await ensureRuntimeFiles()
+
   const [appConfig, mihomoConfig] = await Promise.all([getAppConfig(), getControledMihomoConfig()])
 
   const {
@@ -165,7 +195,7 @@ async function prepareCore(detached: boolean, skipStop = false): Promise<CoreCon
   // generateProfile 返回实际使用的 current
   const current = await generateProfile()
   await checkProfile(current, core, diffWorkDir)
-  if (!skipStop) {
+  if (!skipStop && hasCoreProcess()) {
     await stopCore()
   }
   await cleanupSocketFile()
@@ -190,6 +220,7 @@ async function prepareCore(detached: boolean, skipStop = false): Promise<CoreCon
   return {
     corePath: mihomoCorePath(core),
     workDir: diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(),
+    safePath: diffWorkDir ? mihomoWorkDir() : undefined,
     ipcPath,
     logLevel,
     tunEnabled: tun?.enable ?? false,
@@ -201,14 +232,12 @@ async function prepareCore(detached: boolean, skipStop = false): Promise<CoreCon
 
 // 启动核心进程
 function spawnCoreProcess(config: CoreConfig): ChildProcess {
-  const { corePath, workDir, ipcPath, cpuPriority, detached } = config
-
-  const stdout = createWriteStream(coreLogPath(), { flags: 'a' })
-  const stderr = createWriteStream(coreLogPath(), { flags: 'a' })
+  const { corePath, workDir, safePath, ipcPath, cpuPriority, detached } = config
 
   const proc = spawn(corePath, ['-d', workDir, ctlParam, ipcPath], {
     detached,
-    stdio: detached ? 'ignore' : undefined
+    stdio: detached ? 'ignore' : undefined,
+    env: buildCoreEnv(safePath)
   })
 
   if (process.platform === 'win32' && proc.pid) {
@@ -219,6 +248,8 @@ function spawnCoreProcess(config: CoreConfig): ChildProcess {
   }
 
   if (!detached) {
+    const stdout = createCappedLogWritableStream(coreLogPath())
+    const stderr = createCappedLogWritableStream(coreLogPath())
     proc.stdout?.pipe(stdout)
     proc.stderr?.pipe(stderr)
   }
@@ -235,6 +266,10 @@ function setupCoreListeners(
 ): void {
   proc.on('close', async (code, signal) => {
     managerLogger.info(`Core closed, code: ${code}, signal: ${signal}`)
+
+    if (child === proc) {
+      child = null
+    }
 
     if (isRestarting) {
       managerLogger.info('Core closed during restart, skipping auto-restart')
@@ -273,7 +308,7 @@ function setupCoreListeners(
       if (process.platform === 'win32') {
         managerLogger.info('Attempting Windows pipe cleanup and retry...')
         try {
-          await cleanupWindowsNamedPipes()
+          await cleanupWindowsNamedPipes(true)
           await new Promise((r) => setTimeout(r, 2000))
         } catch (cleanupError) {
           managerLogger.error('Pipe cleanup failed:', cleanupError)
@@ -315,10 +350,12 @@ function setupCoreListeners(
 
       await waitForCoreReady()
       await getAxios(true)
-      await startMihomoTraffic()
-      await startMihomoConnections()
-      await startMihomoLogs()
-      await startMihomoMemory()
+      await Promise.all([
+        startMihomoTraffic(),
+        startMihomoConnections(),
+        startMihomoLogs(),
+        startMihomoMemory()
+      ])
       retry = 10
     }
   })
@@ -327,34 +364,36 @@ function setupCoreListeners(
 // 启动核心
 export async function startCore(detached = false, skipStop = false): Promise<Promise<void>[]> {
   const config = await prepareCore(detached, skipStop)
-  child = spawnCoreProcess(config)
+  const proc = spawnCoreProcess(config)
+  child = proc
 
   if (detached) {
     managerLogger.info(
-      `Core process detached successfully on ${process.platform}, PID: ${child.pid}`
+      `Core process detached successfully on ${process.platform}, PID: ${proc.pid}`
     )
-    child.unref()
+    proc.unref()
     return [new Promise(() => {})]
   }
 
   return new Promise((resolve, reject) => {
-    setupCoreListeners(child, config.logLevel, resolve, reject)
+    setupCoreListeners(proc, config.logLevel, resolve, reject)
   })
 }
 
 // 停止核心
 export async function stopCore(force = false): Promise<void> {
-  try {
-    if (!force) {
+  if (!force && process.platform === 'darwin') {
+    try {
       await recoverDNS()
+    } catch (error) {
+      managerLogger.error('recover dns failed', error)
     }
-  } catch (error) {
-    managerLogger.error('recover dns failed', error)
   }
 
   if (child) {
     child.removeAllListeners()
     child.kill('SIGINT')
+    child = null
   }
 
   stopMihomoTraffic()
@@ -370,6 +409,8 @@ export async function stopCore(force = false): Promise<void> {
 
   await cleanupSocketFile()
 }
+
+setStopCoreBeforeAdminRestart(stopCore)
 
 // 重启核心
 export async function restartCore(): Promise<void> {
@@ -495,6 +536,5 @@ async function checkProfile(
 
 // 权限检查入口（从 permissions.ts 调用）
 export async function checkAdminRestartForTun(): Promise<void> {
-  const { checkAdminRestartForTun: check } = await import('./permissions')
-  await check(restartCore)
+  await checkAdminRestartForTunWithRestart(restartCore)
 }

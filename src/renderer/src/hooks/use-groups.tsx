@@ -1,10 +1,10 @@
 import React, { createContext, useContext, ReactNode } from 'react'
-import useSWR from 'swr'
+import useSWR, { KeyedMutator } from 'swr'
 import { mihomoGroups } from '@renderer/utils/ipc'
 
 interface GroupsContextType {
   groups: IMihomoMixedGroup[] | undefined
-  mutate: () => void
+  mutate: KeyedMutator<IMihomoMixedGroup[]>
 }
 
 const GroupsContext = createContext<GroupsContextType | undefined>(undefined)
@@ -13,8 +13,8 @@ export const GroupsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const { data: groups, mutate } = useSWR<IMihomoMixedGroup[]>('mihomoGroups', mihomoGroups, {
     errorRetryInterval: 200,
     errorRetryCount: 10,
-    refreshInterval: 2000,
-    dedupingInterval: 1000,
+    refreshInterval: 30000,
+    dedupingInterval: 5000,
     keepPreviousData: true,
     revalidateOnFocus: false
   })

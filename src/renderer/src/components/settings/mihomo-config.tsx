@@ -17,12 +17,15 @@ const MihomoConfig: React.FC = () => {
   const { appConfig, patchAppConfig } = useAppConfig()
   const {
     diffWorkDir = false,
+    useHotReloadProfile = false,
+    hotReloadProfileAutoCloseConnection = false,
     delayTestConcurrency,
     delayTestTimeout,
     githubToken = '',
     autoCloseConnection = true,
     testProfileOnStart = true,
     pauseSSID = [],
+    disableDnsOnPauseSSID = false,
     delayTestUrl,
     userAgent,
     subscriptionTimeout = 30000,
@@ -56,7 +59,7 @@ const MihomoConfig: React.FC = () => {
         <div className="flex items-center gap-2">
           <Input
             size="sm"
-            className="w-[100px]"
+            className="w-25"
             type="number"
             value={(subscriptionTimeout / 1000)?.toString()}
             onValueChange={async (v: string) => {
@@ -147,7 +150,7 @@ const MihomoConfig: React.FC = () => {
       <SettingItem title={t('mihomo.proxyColumns.title')} divider>
         <Select
           classNames={{ trigger: 'data-[hover=true]:bg-default-200' }}
-          className="w-[150px]"
+          className="w-37.5"
           size="sm"
           selectedKeys={new Set([proxyCols])}
           aria-label={t('mihomo.proxyColumns.title')}
@@ -167,7 +170,7 @@ const MihomoConfig: React.FC = () => {
         <SettingItem title={t('mihomo.cpuPriority.title')} divider>
           <Select
             classNames={{ trigger: 'data-[hover=true]:bg-default-200' }}
-            className="w-[150px]"
+            className="w-37.5"
             size="sm"
             selectedKeys={new Set([mihomoCpuPriority])}
             disallowEmptySelection={true}
@@ -216,6 +219,47 @@ const MihomoConfig: React.FC = () => {
             } catch (e) {
               toast.error(String(e))
             }
+          }}
+        />
+      </SettingItem>
+
+      <SettingItem
+        title={t('mihomo.hotReloadProfile.title')}
+        actions={
+          <Tooltip content={t('mihomo.hotReloadProfile.tooltip')}>
+            <Button isIconOnly size="sm" variant="light">
+              <IoIosHelpCircle className="text-lg" />
+            </Button>
+          </Tooltip>
+        }
+        divider
+      >
+        <Switch
+          size="sm"
+          isSelected={useHotReloadProfile}
+          onValueChange={(v) => {
+            patchAppConfig({ useHotReloadProfile: v })
+          }}
+        />
+      </SettingItem>
+
+      <SettingItem
+        title={t('mihomo.hotReloadProfile.autoCloseConnection')}
+        actions={
+          <Tooltip content={t('mihomo.hotReloadProfile.autoCloseConnectionTooltip')}>
+            <Button isIconOnly size="sm" variant="light">
+              <IoIosHelpCircle className="text-lg" />
+            </Button>
+          </Tooltip>
+        }
+        divider
+      >
+        <Switch
+          size="sm"
+          isDisabled={!useHotReloadProfile}
+          isSelected={hotReloadProfileAutoCloseConnection}
+          onValueChange={(v) => {
+            patchAppConfig({ hotReloadProfileAutoCloseConnection: v })
           }}
         />
       </SettingItem>
@@ -293,6 +337,15 @@ const MihomoConfig: React.FC = () => {
           )
         })}
       </div>
+      <SettingItem title={t('mihomo.disableDnsOnPauseSSID')}>
+        <Switch
+          size="sm"
+          isSelected={disableDnsOnPauseSSID}
+          onValueChange={(v) => {
+            patchAppConfig({ disableDnsOnPauseSSID: v })
+          }}
+        />
+      </SettingItem>
     </SettingCard>
   )
 }

@@ -7,11 +7,10 @@ import {
   patchControledMihomoConfig
 } from '../config'
 import { triggerSysProxy } from '../sys/sysproxy'
-import { patchMihomoConfig } from '../core/mihomoApi'
-import { quitWithoutCore, restartCore } from '../core/manager'
+import { quitWithoutCore } from '../core/manager'
 import i18next from '../../shared/i18n'
 import { floatingWindow, triggerFloatingWindow } from './floatingWindow'
-import { updateTrayIcon } from './tray'
+import { copyEnv, updateTrayIcon } from './tray'
 
 export async function registerShortcut(
   oldShortcut: string,
@@ -70,7 +69,6 @@ export async function registerShortcut(
           } else {
             await patchControledMihomoConfig({ tun: { enable: !enable } })
           }
-          await restartCore()
           new Notification({
             title: i18next.t(
               !enable ? 'common.notification.tunEnabled' : 'common.notification.tunDisabled'
@@ -89,7 +87,6 @@ export async function registerShortcut(
     case 'ruleModeShortcut': {
       return globalShortcut.register(newShortcut, async () => {
         await patchControledMihomoConfig({ mode: 'rule' })
-        await patchMihomoConfig({ mode: 'rule' })
         new Notification({
           title: i18next.t('common.notification.ruleMode')
         }).show()
@@ -101,7 +98,6 @@ export async function registerShortcut(
     case 'globalModeShortcut': {
       return globalShortcut.register(newShortcut, async () => {
         await patchControledMihomoConfig({ mode: 'global' })
-        await patchMihomoConfig({ mode: 'global' })
         new Notification({
           title: i18next.t('common.notification.globalMode')
         }).show()
@@ -113,7 +109,6 @@ export async function registerShortcut(
     case 'directModeShortcut': {
       return globalShortcut.register(newShortcut, async () => {
         await patchControledMihomoConfig({ mode: 'direct' })
-        await patchMihomoConfig({ mode: 'direct' })
         new Notification({
           title: i18next.t('common.notification.directMode')
         }).show()
@@ -133,6 +128,15 @@ export async function registerShortcut(
         app.quit()
       })
     }
+    case 'copyEnvShortcut': {
+      return globalShortcut.register(newShortcut, async () => {
+        const shellType = process.platform === 'win32' ? 'powershell' : 'bash'
+        await copyEnv(shellType)
+        new Notification({
+          title: i18next.t('common.notification.copyEnvSuccess')
+        }).show()
+      })
+    }
   }
   throw new Error('Unknown action')
 }
@@ -147,7 +151,8 @@ export async function initShortcut(): Promise<void> {
     globalModeShortcut,
     directModeShortcut,
     quitWithoutCoreShortcut,
-    restartAppShortcut
+    restartAppShortcut,
+    copyEnvShortcut
   } = await getAppConfig()
   if (showWindowShortcut) {
     try {
@@ -208,6 +213,13 @@ export async function initShortcut(): Promise<void> {
   if (restartAppShortcut) {
     try {
       await registerShortcut('', restartAppShortcut, 'restartAppShortcut')
+    } catch {
+      // ignore
+    }
+  }
+  if (copyEnvShortcut) {
+    try {
+      await registerShortcut('', copyEnvShortcut, 'copyEnvShortcut')
     } catch {
       // ignore
     }

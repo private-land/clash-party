@@ -1,10 +1,11 @@
-import { spawn, exec } from 'child_process'
+import { spawn, exec, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import { app, powerMonitor } from 'electron'
 import { stopCore, cleanupCoreWatcher } from './core/manager'
-import { triggerSysProxy } from './sys/sysproxy'
+import { primeAdminPrivilegesCache } from './core/admin'
+import { triggerSysProxy, disableSysProxySync } from './sys/sysproxy'
 import { exePath } from './utils/dirs'
 
 export function customRelaunch(): void {
@@ -48,25 +49,88 @@ export function setupPlatformSpecifics(): void {
     app.relaunch = customRelaunch
   }
 
-  if (process.platform === 'win32' && !exePath().startsWith('C')) {
+  // https://github.com/electron/electron/issues/43278
+  // https://github.com/electron/electron/issues/36698
+  const electronMajor = parseInt(process.versions.electron.split('.')[0], 10) || 0
+  if (process.platform === 'win32' && !exePath().startsWith('C') && electronMajor < 38) {
     app.commandLine.appendSwitch('in-process-gpu')
+  }
+
+  if (process.platform === 'win32') {
+    const elevated = isWindowsElevatedSync()
+    if (elevated) {
+      primeAdminPrivilegesCache(true)
+      app.commandLine.appendSwitch('disable-gpu-sandbox')
+    }
+  }
+}
+
+function isWindowsElevatedSync(): boolean {
+  if (process.platform !== 'win32') return false
+  try {
+    execFileSync('fltmc', [], { stdio: 'ignore', windowsHide: true, timeout: 800 })
+    return true
+  } catch {
+    return false
   }
 }
 
 export function setupAppLifecycle(): void {
+  let sysProxyDisabled = false
+  let isQuitting = false
+
+  const withTimeout = async (promise: Promise<void>, timeout: number): Promise<void> => {
+    let timeoutId: NodeJS.Timeout | null = null
+
+    try {
+      await Promise.race([
+        promise,
+        new Promise<void>((resolve) => {
+          timeoutId = setTimeout(resolve, timeout)
+        })
+      ])
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }
+
+  const cleanupBeforeExit = async (): Promise<void> => {
+    if (isQuitting) return
+    isQuitting = true
+
+    cleanupCoreWatcher()
+
+    if (process.platform !== 'darwin') {
+      disableSysProxySync()
+      sysProxyDisabled = true
+    }
+
+    await withTimeout(
+      Promise.allSettled([
+        triggerSysProxy(false).then(() => {
+          sysProxyDisabled = true
+        }),
+        stopCore()
+      ]).then(() => {}),
+      1200
+    )
+  }
+
   app.on('before-quit', async (e) => {
     e.preventDefault()
-    cleanupCoreWatcher()
-    await triggerSysProxy(false)
-    await stopCore()
+    await cleanupBeforeExit()
     app.exit()
   })
 
   powerMonitor.on('shutdown', async () => {
-    cleanupCoreWatcher()
-    triggerSysProxy(false)
-    await stopCore()
+    await cleanupBeforeExit()
     app.exit()
+  })
+
+  app.on('will-quit', () => {
+    if (!sysProxyDisabled) {
+      disableSysProxySync()
+    }
   })
 }
 

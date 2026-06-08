@@ -4,10 +4,12 @@ import { stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
 import { app, dialog, ipcMain } from 'electron'
-import { getAppConfig, patchControledMihomoConfig } from '../config'
+import { getAppConfig, getControledMihomoConfig, patchControledMihomoConfig } from '../config'
 import { mihomoCorePath, mihomoCoreDir } from '../utils/dirs'
 import { managerLogger } from '../utils/logger'
+import { checkAutoRun, enableAutoRun } from '../sys/autoRun'
 import i18next from '../../shared/i18n'
+import { checkAdminPrivileges } from './admin'
 
 const execPromise = promisify(exec)
 const execFilePromise = promisify(execFile)
@@ -15,6 +17,13 @@ const execFilePromise = promisify(execFile)
 // 内核名称白名单
 const ALLOWED_CORES = ['mihomo', 'mihomo-alpha', 'mihomo-smart'] as const
 type AllowedCore = (typeof ALLOWED_CORES)[number]
+type StopCoreBeforeAdminRestart = (force?: boolean) => Promise<void>
+
+let stopCoreBeforeAdminRestart: StopCoreBeforeAdminRestart | null = null
+
+export function setStopCoreBeforeAdminRestart(stopCore: StopCoreBeforeAdminRestart): void {
+  stopCoreBeforeAdminRestart = stopCore
+}
 
 export function isValidCoreName(core: string): core is AllowedCore {
   return ALLOWED_CORES.includes(core as AllowedCore)
@@ -58,32 +67,7 @@ export function getSessionAdminStatus(): boolean {
   return sessionAdminStatus ?? false
 }
 
-export async function checkAdminPrivileges(): Promise<boolean> {
-  if (process.platform !== 'win32') {
-    return true
-  }
-
-  try {
-    await execPromise('chcp 65001 >nul 2>&1 && fltmc', { encoding: 'utf8' })
-    managerLogger.info('Admin privileges confirmed via fltmc')
-    return true
-  } catch (fltmcError: unknown) {
-    const errorCode = (fltmcError as { code?: number })?.code || 0
-    managerLogger.debug(`fltmc failed with code ${errorCode}, trying net session as fallback`)
-
-    try {
-      await execPromise('chcp 65001 >nul 2>&1 && net session', { encoding: 'utf8' })
-      managerLogger.info('Admin privileges confirmed via net session')
-      return true
-    } catch (netSessionError: unknown) {
-      const netErrorCode = (netSessionError as { code?: number })?.code || 0
-      managerLogger.debug(
-        `Both fltmc and net session failed, no admin privileges. Error codes: fltmc=${errorCode}, net=${netErrorCode}`
-      )
-      return false
-    }
-  }
-}
+export { checkAdminPrivileges } from './admin'
 
 export async function checkMihomoCorePermissions(): Promise<boolean> {
   const { core = 'mihomo' } = await getAppConfig()
@@ -149,41 +133,64 @@ async function checkHighPrivilegeMihomoProcess(): Promise<boolean> {
 
   try {
     if (process.platform === 'win32') {
-      for (const executable of mihomoExecutables) {
-        try {
-          const { stdout } = await execPromise(
-            `chcp 65001 >nul 2>&1 && tasklist /FI "IMAGENAME eq ${executable}" /FO CSV`,
-            { encoding: 'utf8' }
-          )
-          const lines = stdout.split('\n').filter((line) => line.includes(executable))
+      let stdout = ''
+      try {
+        const result = await execFilePromise('tasklist', ['/FO', 'CSV', '/NH'], {
+          windowsHide: true,
+          timeout: 3000,
+          maxBuffer: 4 * 1024 * 1024
+        })
+        stdout = result.stdout
+      } catch (error) {
+        managerLogger.error('Failed to list processes via tasklist', error)
+        return false
+      }
 
-          if (lines.length > 0) {
-            managerLogger.info(`Found ${lines.length} ${executable} processes running`)
-
-            for (const line of lines) {
-              const parts = line.split(',')
-              if (parts.length >= 2) {
-                const pid = parts[1].replace(/"/g, '').trim()
-                try {
-                  const { stdout: processInfo } = await execPromise(
-                    `powershell -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Process -Id ${pid} | Select-Object Name,Id,Path,CommandLine | ConvertTo-Json"`,
-                    { encoding: 'utf8' }
-                  )
-                  const processJson = JSON.parse(processInfo)
-                  managerLogger.info(`Process ${pid} info: ${processInfo.substring(0, 200)}`)
-
-                  if (processJson.Name.includes('mihomo') && processJson.Path === null) {
-                    return true
-                  }
-                } catch {
-                  managerLogger.info(`Cannot get info for process ${pid}, might be high privilege`)
-                }
-              }
-            }
-          }
-        } catch (error) {
-          managerLogger.error(`Failed to check ${executable} processes`, error)
+      const candidatePids: { pid: string; image: string }[] = []
+      for (const line of stdout.split('\n')) {
+        const match = line.match(/^"([^"]+)","(\d+)"/)
+        if (!match) continue
+        const image = match[1].toLowerCase()
+        if (mihomoExecutables.includes(image)) {
+          candidatePids.push({ pid: match[2], image })
         }
+      }
+
+      if (candidatePids.length === 0) {
+        managerLogger.info('No mihomo processes found running')
+        return false
+      }
+
+      managerLogger.info(`Found ${candidatePids.length} mihomo processes running`)
+
+      const pidArgs = candidatePids.map(({ pid }) => pid).join(',')
+      try {
+        const { stdout: processInfo } = await execFilePromise(
+          'powershell',
+          [
+            '-NoProfile',
+            '-Command',
+            `Get-Process -Id ${pidArgs} -ErrorAction SilentlyContinue | Select-Object Name,Id,Path | ConvertTo-Json -Compress`
+          ],
+          { windowsHide: true, timeout: 4000, maxBuffer: 4 * 1024 * 1024 }
+        )
+
+        if (!processInfo.trim()) return false
+
+        const parsed = JSON.parse(processInfo)
+        const list = Array.isArray(parsed) ? parsed : [parsed]
+        for (const proc of list) {
+          if (
+            proc &&
+            typeof proc.Name === 'string' &&
+            proc.Name.toLowerCase().includes('mihomo') &&
+            proc.Path === null
+          ) {
+            return true
+          }
+        }
+      } catch (error) {
+        managerLogger.info('PowerShell process inspection failed', error)
       }
     } else {
       let foundProcesses = false
@@ -260,9 +267,8 @@ export async function restartAsAdmin(forTun: boolean = true): Promise<void> {
 
   // 先停止 Core，避免新旧进程冲突
   try {
-    const { stopCore } = await import('./manager')
     managerLogger.info('Stopping core before admin restart...')
-    await stopCore(true)
+    await stopCoreBeforeAdminRestart?.(true)
     await new Promise((resolve) => setTimeout(resolve, 500))
   } catch (error) {
     managerLogger.warn('Failed to stop core before restart:', error)
@@ -342,7 +348,6 @@ export async function showErrorDialog(title: string, message: string): Promise<v
 export async function validateTunPermissionsOnStartup(
   _restartCore: () => Promise<void>
 ): Promise<void> {
-  const { getControledMihomoConfig } = await import('../config')
   const { tun } = await getControledMihomoConfig()
 
   if (!tun?.enable) {
@@ -378,7 +383,6 @@ export async function checkAdminRestartForTun(restartCore: () => Promise<void>):
         if (hasAdminPrivileges) {
           await patchControledMihomoConfig({ tun: { enable: true }, dns: { enable: true } })
 
-          const { checkAutoRun, enableAutoRun } = await import('../sys/autoRun')
           const autoRunEnabled = await checkAutoRun()
           if (autoRunEnabled) {
             await enableAutoRun()

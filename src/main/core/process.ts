@@ -1,4 +1,4 @@
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import { promisify } from 'util'
 import { rm } from 'fs/promises'
 import { existsSync } from 'fs'
@@ -6,6 +6,7 @@ import { managerLogger } from '../utils/logger'
 import { getAxios } from './mihomoApi'
 
 const execPromise = promisify(exec)
+const execFilePromise = promisify(execFile)
 
 // 常量
 const CORE_READY_MAX_RETRIES = 30
@@ -19,7 +20,38 @@ export async function cleanupSocketFile(): Promise<void> {
   }
 }
 
-export async function cleanupWindowsNamedPipes(): Promise<void> {
+// thorough=true 走 PowerShell 慢路径，仅在外部控制器监听冲突时使用
+export async function cleanupWindowsNamedPipes(thorough = false): Promise<void> {
+  if (!thorough) {
+    try {
+      const { stdout } = await execFilePromise(
+        'tasklist',
+        ['/FI', 'IMAGENAME eq mihomo*', '/FO', 'CSV', '/NH'],
+        { windowsHide: true, timeout: 1500, maxBuffer: 1 * 1024 * 1024 }
+      )
+
+      const pids: number[] = []
+      for (const line of stdout.split('\n')) {
+        const match = line.match(/^"([^"]+)","(\d+)"/)
+        if (!match) continue
+        const pid = parseInt(match[2], 10)
+        if (!isNaN(pid) && pid !== process.pid) pids.push(pid)
+      }
+
+      if (pids.length === 0) return
+
+      for (const pid of pids) {
+        await terminateProcess(pid)
+      }
+
+      // 给进程留出退出窗口，避免 pipe 占用导致后续启动失败
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    } catch (error) {
+      managerLogger.warn('Lightweight pipe cleanup failed:', error)
+    }
+    return
+  }
+
   try {
     try {
       const { stdout } = await execPromise(

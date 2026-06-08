@@ -1,16 +1,22 @@
 import BasePage from '@renderer/components/base/base-page'
 import RuleItem from '@renderer/components/rules/rule-item'
 import { Virtuoso } from 'react-virtuoso'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Divider, Input } from '@heroui/react'
 import { useRules } from '@renderer/hooks/use-rules'
 import { includesIgnoreCase } from '@renderer/utils/includes'
 import { useTranslation } from 'react-i18next'
 
+const RULES_FILTER_KEY = 'rules-filter'
+
 const Rules: React.FC = () => {
   const { rules } = useRules()
-  const [filter, setFilter] = useState('')
+  const [filter, setFilter] = useState(() => localStorage.getItem(RULES_FILTER_KEY) || '')
   const { t } = useTranslation()
+
+  useEffect(() => {
+    localStorage.setItem(RULES_FILTER_KEY, filter)
+  }, [filter])
 
   const filteredRules = useMemo(() => {
     if (!rules) return []

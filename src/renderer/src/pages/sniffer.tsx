@@ -5,7 +5,7 @@ import SettingCard from '@renderer/components/base/base-setting-card'
 import SettingItem from '@renderer/components/base/base-setting-item'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
-import { restartCore, patchMihomoConfig } from '@renderer/utils/ipc'
+import { mihomoHotReloadConfig } from '@renderer/utils/ipc'
 import React, { ReactNode, useState } from 'react'
 import { MdDeleteForever } from 'react-icons/md'
 import { useTranslation } from 'react-i18next'
@@ -67,8 +67,7 @@ const Sniffer: React.FC = () => {
       await patchControledMihomoConfig(patch)
 
       if (controlSniff) {
-        await patchMihomoConfig(patch)
-        await restartCore()
+        await mihomoHotReloadConfig()
       }
     } catch (e) {
       showErrorSync(e, t('common.error.snifferConfigSaveFailed'))

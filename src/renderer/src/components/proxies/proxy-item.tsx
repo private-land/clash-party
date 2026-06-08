@@ -3,9 +3,10 @@ import { mihomoUnfixedProxy } from '@renderer/utils/ipc'
 import React, { useMemo, useState, useCallback } from 'react'
 import { FaMapPin } from 'react-icons/fa6'
 import { useTranslation } from 'react-i18next'
+import { KeyedMutator } from 'swr'
 
 interface Props {
-  mutateProxies: () => void
+  mutateProxies: KeyedMutator<IMihomoMixedGroup[]>
   onProxyDelay: (proxy: string, url?: string) => Promise<IMihomoDelay>
   proxyDisplayMode: 'simple' | 'full'
   proxy: IMihomoProxy | IMihomoGroup
@@ -97,7 +98,7 @@ const ProxyItemBase: React.FC<Props> = (props) => {
                     mutateProxies()
                   }}
                   variant="light"
-                  className="h-[20px] p-0 text-sm"
+                  className="h-5 p-0 text-sm"
                 >
                   <FaMapPin className="text-md le" />
                 </Button>
@@ -151,7 +152,7 @@ const ProxyItemBase: React.FC<Props> = (props) => {
                     mutateProxies()
                   }}
                   variant="light"
-                  className="h-[20px] p-0 text-sm"
+                  className="h-5 p-0 text-sm"
                 >
                   <FaMapPin className="text-md le" />
                 </Button>

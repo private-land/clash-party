@@ -14,7 +14,7 @@ import dayjs from '@renderer/utils/dayjs'
 import React, { Key, useMemo, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { openFile, restartCore } from '@renderer/utils/ipc'
+import { openFile, mihomoHotReloadConfig } from '@renderer/utils/ipc'
 import { useTranslation } from 'react-i18next'
 import ExecLogModal from './exec-log-modal'
 import EditInfoModal from './edit-info-modal'
@@ -189,7 +189,7 @@ const OverrideItem: React.FC<Props> = (props) => {
                       setUpdating(true)
                       try {
                         await addOverrideItem(info)
-                        await restartCore()
+                        await mihomoHotReloadConfig()
                       } catch (e) {
                         toast.error(String(e))
                       } finally {

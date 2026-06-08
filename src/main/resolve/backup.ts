@@ -1,4 +1,5 @@
 import https from 'https'
+import os from 'os'
 import { existsSync } from 'fs'
 import dayjs from 'dayjs'
 import AdmZip from 'adm-zip'
@@ -26,6 +27,26 @@ interface WebDAVContext {
   client: ReturnType<Awaited<typeof import('webdav/dist/node/index.js')>['createClient']>
   webdavDir: string
   webdavMaxBackups: number
+}
+
+function sanitizeDeviceNameForFilename(name: string): string {
+  const withoutControlChars = Array.from(name)
+    .filter((char) => char.charCodeAt(0) >= 32)
+    .join('')
+
+  const sanitized = withoutControlChars
+    .trim()
+    .replace(/[<>:"/\\|?*]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  return sanitized || 'unknown-device'
+}
+
+function getWebDAVBackupPrefix(): string {
+  const deviceName = sanitizeDeviceNameForFilename(os.hostname())
+  return `${process.platform}_${deviceName}`
 }
 
 async function getWebDAVClient(): Promise<WebDAVContext> {
@@ -92,7 +113,8 @@ export async function webdavBackup(): Promise<boolean> {
   const { client, webdavDir, webdavMaxBackups } = await getWebDAVClient()
   const zip = createBackupZip()
   const date = new Date()
-  const zipFileName = `${process.platform}_${dayjs(date).format('YYYY-MM-DD_HH-mm-ss')}.zip`
+  const backupPrefix = getWebDAVBackupPrefix()
+  const zipFileName = `${backupPrefix}_${dayjs(date).format('YYYY-MM-DD_HH-mm-ss')}.zip`
 
   try {
     await client.createDirectory(webdavDir)
@@ -104,11 +126,10 @@ export async function webdavBackup(): Promise<boolean> {
 
   if (webdavMaxBackups > 0) {
     try {
-      const files = await client.getDirectoryContents(webdavDir, { glob: '*.zip' })
-      const fileList = Array.isArray(files) ? files : files.data
+      const fileList = await client.getDirectoryContents(webdavDir, { glob: '*.zip' })
 
       const currentPlatformFiles = fileList.filter((file) => {
-        return file.basename.startsWith(`${process.platform}_`)
+        return file.basename.startsWith(`${backupPrefix}_`)
       })
 
       currentPlatformFiles.sort((a, b) => {
@@ -147,11 +168,7 @@ export async function webdavRestore(filename: string): Promise<void> {
 export async function listWebdavBackups(): Promise<string[]> {
   const { client, webdavDir } = await getWebDAVClient()
   const files = await client.getDirectoryContents(webdavDir, { glob: '*.zip' })
-  if (Array.isArray(files)) {
-    return files.map((file) => file.basename)
-  } else {
-    return files.data.map((file) => file.basename)
-  }
+  return files.map((file) => file.basename)
 }
 
 export async function webdavDelete(filename: string): Promise<void> {

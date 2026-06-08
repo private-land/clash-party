@@ -22,7 +22,10 @@ import {
 } from '@heroui/react'
 import { calcTraffic } from '@renderer/utils/calc'
 import ConnectionItem from '@renderer/components/connections/connection-item'
-import ConnectionTable from '@renderer/components/connections/connection-table'
+import ConnectionTable, {
+  CONNECTION_TABLE_COLUMNS,
+  DEFAULT_CONNECTION_TABLE_COLUMN_KEYS
+} from '@renderer/components/connections/connection-table'
 import { Virtuoso } from 'react-virtuoso'
 import dayjs from '@renderer/utils/dayjs'
 import ConnectionDetailModal from '@renderer/components/connections/connection-detail-modal'
@@ -32,8 +35,6 @@ import { HiSortAscending, HiSortDescending } from 'react-icons/hi'
 import { MdViewList, MdTableChart } from 'react-icons/md'
 import { HiOutlineAdjustmentsHorizontal } from 'react-icons/hi2'
 import { includesIgnoreCase } from '@renderer/utils/includes'
-import differenceWith from 'lodash/differenceWith'
-import unionWith from 'lodash/unionWith'
 import { useTranslation } from 'react-i18next'
 import { IoMdPause, IoMdPlay } from 'react-icons/io'
 import { saveIconToCache, getIconFromCache } from '@renderer/utils/icon-cache'
@@ -43,37 +44,26 @@ import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-c
 
 let cachedConnections: IMihomoConnectionDetail[] = []
 const MAX_QUEUE_SIZE = 100
+const CONNECTIONS_FILTER_KEY = 'connections-filter'
 
 const Connections: React.FC = () => {
   const { t } = useTranslation()
   const { controledMihomoConfig } = useControledMihomoConfig()
   const { 'find-process-mode': findProcessMode = 'always' } = controledMihomoConfig || {}
-  const [filter, setFilter] = useState('')
+  const [filter, setFilter] = useState(() => localStorage.getItem(CONNECTIONS_FILTER_KEY) || '')
   const { appConfig, patchAppConfig } = useAppConfig()
+  const appConfigValues: Partial<IAppConfig> = appConfig ?? {}
   const {
     connectionDirection = 'asc',
     connectionOrderBy = 'time',
     connectionViewMode = 'list',
-    connectionTableColumns = [
-      'status',
-      'establishTime',
-      'type',
-      'host',
-      'process',
-      'rule',
-      'proxyChain',
-      'remoteDestination',
-      'uploadSpeed',
-      'downloadSpeed',
-      'upload',
-      'download'
-    ],
+    connectionTableColumns = DEFAULT_CONNECTION_TABLE_COLUMN_KEYS,
     connectionTableColumnWidths,
     connectionTableSortColumn,
     connectionTableSortDirection,
     displayIcon = true,
     displayAppName = true
-  } = appConfig || {}
+  } = appConfigValues
   const [connectionsInfo, setConnectionsInfo] = useState<IMihomoConnectionsInfo>()
   const [allConnections, setAllConnections] = useState<IMihomoConnectionDetail[]>(cachedConnections)
   const [activeConnections, setActiveConnections] = useState<IMihomoConnectionDetail[]>([])
@@ -105,6 +95,18 @@ const Connections: React.FC = () => {
     allConnectionsRef.current = allConnections
   }, [activeConnections, allConnections])
 
+  useEffect(() => {
+    localStorage.setItem(CONNECTIONS_FILTER_KEY, filter)
+  }, [filter])
+
+  useEffect(() => {
+    setViewMode(connectionViewMode)
+  }, [connectionViewMode])
+
+  useEffect(() => {
+    setVisibleColumns(new Set(connectionTableColumns))
+  }, [connectionTableColumns])
+
   const selectedConnection = useMemo(() => {
     if (!selected) return undefined
     return (
@@ -122,9 +124,9 @@ const Connections: React.FC = () => {
   )
 
   const handleSortChange = useCallback(
-    async (column: string | null, direction: 'asc' | 'desc') => {
+    async (column: string, direction: 'asc' | 'desc') => {
       await patchAppConfig({
-        connectionTableSortColumn: column || undefined,
+        connectionTableSortColumn: column,
         connectionTableSortDirection: direction
       })
     },
@@ -176,6 +178,11 @@ const Connections: React.FC = () => {
     connectionOrderBy,
     viewMode
   ])
+
+  const filteredConnectionsRef = useRef<IMihomoConnectionDetail[]>([])
+  useEffect(() => {
+    filteredConnectionsRef.current = filteredConnections
+  }, [filteredConnections])
 
   const closeAllConnections = useCallback((): void => {
     tab === 'active' ? mihomoCloseAllConnections() : trashAllClosedConnection()
@@ -265,7 +272,7 @@ const Connections: React.FC = () => {
 
         setIconMap((prev) => ({ ...prev, [path]: processedDataURL }))
 
-        const firstConnection = filteredConnections[0]
+        const firstConnection = filteredConnectionsRef.current[0]
         if (firstConnection?.metadata.processPath === path) {
           setFirstItemRefreshTrigger((prev) => prev + 1)
         }
@@ -287,7 +294,7 @@ const Connections: React.FC = () => {
         processIconTimer.current = setTimeout(processIconQueue, 50)
       }
     }
-  }, [filteredConnections])
+  }, [])
 
   useEffect(() => {
     if (!displayIcon || findProcessMode === 'off') return
@@ -295,7 +302,7 @@ const Connections: React.FC = () => {
     const visiblePaths = new Set<string>()
     const otherPaths = new Set<string>()
 
-    const visibleConnections = filteredConnections.slice(0, 20)
+    const visibleConnections = filteredConnectionsRef.current.slice(0, 20)
     visibleConnections.forEach((c) => {
       const path = c.metadata.processPath || ''
       visiblePaths.add(path)
@@ -372,11 +379,11 @@ const Connections: React.FC = () => {
     iconMap,
     appNameCache,
     displayIcon,
-    filteredConnections,
     processIconQueue,
     processAppNameQueue,
     displayAppName,
-    findProcessMode
+    findProcessMode,
+    filteredConnections
   ])
 
   useEffect(() => {
@@ -385,11 +392,10 @@ const Connections: React.FC = () => {
       setConnectionsInfo(info)
 
       if (!info.connections) return
-      const allConns = unionWith(
-        activeConnectionsRef.current,
-        allConnectionsRef.current,
-        (a, b) => a.id === b.id
-      )
+      // O(n+m) merge using Map instead of O(n²) unionWith
+      const allConnsMap = new Map(allConnectionsRef.current.map((c) => [c.id, c]))
+      activeConnectionsRef.current.forEach((c) => allConnsMap.set(c.id, c))
+      const allConns = Array.from(allConnsMap.values())
 
       const prevConnMap = new Map(activeConnectionsRef.current.map((c) => [c.id, c]))
       const activeConns = info.connections.map((conn) => {
@@ -401,19 +407,22 @@ const Connections: React.FC = () => {
           uploadSpeed: preConn ? conn.upload - preConn.upload : 0
         }
       })
-      const closedConns = differenceWith(allConns, activeConns, (a, b) => a.id === b.id).map(
-        (conn) => ({
+      // O(n+m) difference using Set instead of O(n²) differenceWith
+      const activeIdSet = new Set(activeConns.map((c) => c.id))
+      const closedConns = allConns
+        .filter((c) => !activeIdSet.has(c.id))
+        .map((conn) => ({
           ...conn,
           isActive: false,
           downloadSpeed: 0,
           uploadSpeed: 0
-        })
-      )
+        }))
 
+      const sliced = allConns.slice(-(activeConns.length + 200))
       setActiveConnections(activeConns)
       setClosedConnections(closedConns)
-      setAllConnections(allConns.slice(-(activeConns.length + 200)))
-      cachedConnections = allConns
+      setAllConnections(sliced)
+      cachedConnections = sliced
     }
 
     if (!isPaused) {
@@ -421,9 +430,14 @@ const Connections: React.FC = () => {
     }
 
     return (): void => {
-      window.electron.ipcRenderer.removeAllListeners('mihomoConnections')
+      window.electron.ipcRenderer.removeListener('mihomoConnections', handler)
     }
   }, [isPaused])
+
+  const openConnectionDetail = useCallback((connection: IMihomoConnectionDetail): void => {
+    setSelected(connection)
+    setIsDetailModalOpen(true)
+  }, [])
   const togglePause = useCallback(() => {
     setIsPaused((prev) => !prev)
   }, [])
@@ -552,7 +566,7 @@ const Connections: React.FC = () => {
             color={tab === 'active' ? 'primary' : 'danger'}
             selectedKey={tab}
             variant="underlined"
-            className="w-fit h-[32px]"
+            className="w-fit h-8"
             onSelectionChange={(key: Key) => {
               setTab(key as string)
             }}
@@ -614,38 +628,17 @@ const Connections: React.FC = () => {
                 selectionMode="multiple"
                 selectedKeys={visibleColumns}
                 onSelectionChange={async (keys) => {
-                  const newColumns = Array.from(keys) as string[]
+                  const newColumns =
+                    keys === 'all'
+                      ? CONNECTION_TABLE_COLUMNS.map((column) => column.key)
+                      : Array.from(keys).map(String)
                   setVisibleColumns(new Set(newColumns))
                   await patchAppConfig({ connectionTableColumns: newColumns })
                 }}
               >
-                <DropdownItem key="status">{t('connections.detail.status')}</DropdownItem>
-                <DropdownItem key="establishTime">
-                  {t('connections.detail.establishTime')}
-                </DropdownItem>
-                <DropdownItem key="type">{t('connections.detail.connectionType')}</DropdownItem>
-                <DropdownItem key="host">{t('connections.detail.host')}</DropdownItem>
-                <DropdownItem key="sniffHost">{t('connections.detail.sniffHost')}</DropdownItem>
-                <DropdownItem key="process">{t('connections.detail.processName')}</DropdownItem>
-                <DropdownItem key="processPath">{t('connections.detail.processPath')}</DropdownItem>
-                <DropdownItem key="rule">{t('connections.detail.rule')}</DropdownItem>
-                <DropdownItem key="proxyChain">{t('connections.detail.proxyChain')}</DropdownItem>
-                <DropdownItem key="sourceIP">{t('connections.detail.sourceIP')}</DropdownItem>
-                <DropdownItem key="sourcePort">{t('connections.detail.sourcePort')}</DropdownItem>
-                <DropdownItem key="destinationPort">
-                  {t('connections.detail.destinationPort')}
-                </DropdownItem>
-                <DropdownItem key="inboundIP">{t('connections.detail.inboundIP')}</DropdownItem>
-                <DropdownItem key="inboundPort">{t('connections.detail.inboundPort')}</DropdownItem>
-                <DropdownItem key="uploadSpeed">{t('connections.uploadSpeed')}</DropdownItem>
-                <DropdownItem key="downloadSpeed">{t('connections.downloadSpeed')}</DropdownItem>
-                <DropdownItem key="upload">{t('connections.uploadAmount')}</DropdownItem>
-                <DropdownItem key="download">{t('connections.downloadAmount')}</DropdownItem>
-                <DropdownItem key="dscp">{t('connections.detail.dscp')}</DropdownItem>
-                <DropdownItem key="remoteDestination">
-                  {t('connections.detail.remoteDestination')}
-                </DropdownItem>
-                <DropdownItem key="dnsMode">{t('connections.detail.dnsMode')}</DropdownItem>
+                {CONNECTION_TABLE_COLUMNS.map((column) => (
+                  <DropdownItem key={column.key}>{t(column.labelKey)}</DropdownItem>
+                ))}
               </DropdownMenu>
             </Dropdown>
           )}
@@ -655,7 +648,7 @@ const Connections: React.FC = () => {
               <Select
                 classNames={{ trigger: 'data-[hover=true]:bg-default-200' }}
                 size="sm"
-                className="w-[180px] min-w-[131px]"
+                className="w-45 min-w-32.75"
                 aria-label={t('connections.orderBy')}
                 selectedKeys={[connectionOrderBy]}
                 disallowEmptySelection={true}
@@ -703,13 +696,12 @@ const Connections: React.FC = () => {
         ) : (
           <ConnectionTable
             connections={filteredConnections}
-            setSelected={setSelected}
-            setIsDetailModalOpen={setIsDetailModalOpen}
+            onOpenDetail={openConnectionDetail}
             close={closeConnection}
             visibleColumns={visibleColumns}
-            initialColumnWidths={connectionTableColumnWidths}
-            initialSortColumn={connectionTableSortColumn}
-            initialSortDirection={connectionTableSortDirection}
+            columnWidths={connectionTableColumnWidths}
+            sortColumn={connectionTableSortColumn}
+            sortDirection={connectionTableSortDirection}
             onColumnWidthChange={handleColumnWidthChange}
             onSortChange={handleSortChange}
           />

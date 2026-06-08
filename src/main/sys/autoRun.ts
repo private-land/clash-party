@@ -6,6 +6,7 @@ import { promisify } from 'util'
 import path from 'path'
 import { exePath, homeDir } from '../utils/dirs'
 import { managerLogger } from '../utils/logger'
+import { checkAdminPrivileges } from '../core/admin'
 
 const appName = 'mihomo-party'
 
@@ -96,7 +97,6 @@ export async function enableAutoRun(): Promise<void> {
   if (process.platform === 'win32') {
     const execPromise = promisify(exec)
     const taskFilePath = path.join(tmpdir(), `${appName}.xml`)
-    const { checkAdminPrivileges } = await import('../core/manager')
     const isAdmin = await checkAdminPrivileges()
     await writeFile(taskFilePath, Buffer.from(`\ufeff${getTaskXml(isAdmin)}`, 'utf-16le'))
 
@@ -175,7 +175,6 @@ Categories=Utility;
 export async function disableAutoRun(): Promise<void> {
   if (process.platform === 'win32') {
     const execPromise = promisify(exec)
-    const { checkAdminPrivileges } = await import('../core/manager')
     const isAdmin = await checkAdminPrivileges()
 
     // 删除任务计划程序中的任务

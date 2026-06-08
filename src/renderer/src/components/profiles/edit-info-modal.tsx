@@ -16,7 +16,7 @@ import {
 import { toast } from '@renderer/components/base/toast'
 import React, { useState } from 'react'
 import { useOverrideConfig } from '@renderer/hooks/use-override-config'
-import { restartCore, addProfileUpdater } from '@renderer/utils/ipc'
+import { mihomoHotReloadConfig, addProfileUpdater } from '@renderer/utils/ipc'
 import { MdDeleteForever } from 'react-icons/md'
 import { FaPlus } from 'react-icons/fa6'
 import { useTranslation } from 'react-i18next'
@@ -33,8 +33,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
   const { overrideConfig } = useOverrideConfig()
   const { items: overrideItems = [] } = overrideConfig || {}
   const [values, setValues] = useState({
-    ...item,
-    updateTimeout: item.updateTimeout ?? 5
+    ...item
   })
   const inputWidth = 'w-[400px] md:w-[400px] lg:w-[600px] xl:w-[800px]'
   const { t } = useTranslation()
@@ -43,7 +42,6 @@ const EditInfoModal: React.FC<Props> = (props) => {
     try {
       const updatedItem = {
         ...values,
-        updateTimeout: values.updateTimeout ?? 5,
         override: values.override?.filter(
           (i) =>
             overrideItems.find((t) => t.id === i) && !overrideItems.find((t) => t.id === i)?.global
@@ -51,7 +49,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
       }
       await updateProfileItem(updatedItem)
       await addProfileUpdater(updatedItem)
-      await restartCore()
+      await mihomoHotReloadConfig()
       onClose()
     } catch (e) {
       toast.error(String(e))
@@ -106,6 +104,17 @@ const EditInfoModal: React.FC<Props> = (props) => {
                     setValues({ ...values, authToken: v })
                   }}
                   placeholder={t('profiles.editInfo.authTokenPlaceholder')}
+                />
+              </SettingItem>
+              <SettingItem title={t('profiles.editInfo.userAgent')}>
+                <Input
+                  size="sm"
+                  className={cn(inputWidth)}
+                  value={values.userAgent || ''}
+                  onValueChange={(v) => {
+                    setValues({ ...values, userAgent: v || undefined })
+                  }}
+                  placeholder={t('profiles.editInfo.userAgentPlaceholder')}
                 />
               </SettingItem>
               <SettingItem title={t('profiles.editInfo.useProxy')}>
@@ -194,26 +203,26 @@ const EditInfoModal: React.FC<Props> = (props) => {
                   </SettingItem>
                 </>
               )}
+              <SettingItem title={t('profiles.editInfo.updateTimeout')}>
+                <Input
+                  size="sm"
+                  type="text"
+                  className={cn(inputWidth)}
+                  value={values.updateTimeout?.toString() ?? ''}
+                  onValueChange={(v) => {
+                    if (v === '') {
+                      setValues({ ...values, updateTimeout: undefined })
+                      return
+                    }
+                    if (/^\d+$/.test(v)) {
+                      setValues({ ...values, updateTimeout: parseInt(v, 10) })
+                    }
+                  }}
+                  placeholder={t('profiles.editInfo.updateTimeoutPlaceholder')}
+                />
+              </SettingItem>
             </>
           )}
-          <SettingItem title={t('profiles.editInfo.updateTimeout')}>
-            <Input
-              size="sm"
-              type="text"
-              className={cn(inputWidth)}
-              value={values.updateTimeout?.toString() ?? ''}
-              onValueChange={(v) => {
-                if (v === '') {
-                  setValues({ ...values, updateTimeout: undefined as unknown as number })
-                  return
-                }
-                if (/^\d+$/.test(v)) {
-                  setValues({ ...values, updateTimeout: parseInt(v, 10) })
-                }
-              }}
-              placeholder={t('profiles.editInfo.updateTimeoutPlaceholder')}
-            />
-          </SettingItem>
           <SettingItem title={t('profiles.editInfo.override.title')}>
             <div>
               {overrideItems

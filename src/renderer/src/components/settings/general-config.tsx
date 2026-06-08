@@ -15,6 +15,7 @@ import {
   getFilePath,
   importThemes,
   relaunchApp,
+  readImageFileDataURL,
   resolveThemes,
   showFloatingWindow,
   showTrayIcon,
@@ -33,6 +34,9 @@ import SettingItem from '../base/base-setting-item'
 import SettingCard from '../base/base-setting-card'
 import BaseConfirmModal from '../base/base-confirm-modal'
 import CSSEditorModal from './css-editor-modal'
+import TrayIconCropModal from './tray-icon-crop-modal'
+
+const rasterTrayIconPattern = /\.(png|jpe?g|webp)$/i
 
 const GeneralConfig: React.FC = () => {
   const { t, i18n } = useTranslation()
@@ -42,6 +46,7 @@ const GeneralConfig: React.FC = () => {
   const [openCSSEditor, setOpenCSSEditor] = useState(false)
   const [fetching, setFetching] = useState(false)
   const [isRelaunching, setIsRelaunching] = useState(false)
+  const [trayIconCropDataURL, setTrayIconCropDataURL] = useState('')
   const [showHardwareAccelConfirm, setShowHardwareAccelConfirm] = useState(false)
   const [pendingHardwareAccelValue, setPendingHardwareAccelValue] = useState(false)
   const { setTheme } = useTheme()
@@ -55,6 +60,7 @@ const GeneralConfig: React.FC = () => {
     disableTray = false,
     swapTrayClick = false,
     disableTrayIconColor = false,
+    customTrayIcon = '',
     disableAnimations = false,
     showFloatingWindow: showFloating = false,
     spinFloatingIcon = true,
@@ -66,10 +72,12 @@ const GeneralConfig: React.FC = () => {
     customTheme = 'default.css',
     envType = [platform === 'win32' ? 'powershell' : 'bash'],
     autoCheckUpdate,
+    githubProxy = 'auto',
     appTheme = 'system',
     language = 'zh-CN',
     triggerMainWindowBehavior = 'show',
-    hideConnectionCardWave = false
+    hideConnectionCardWave = false,
+    disableAppLog = false
   } = appConfig || {}
 
   useEffect(() => {
@@ -113,11 +121,22 @@ const GeneralConfig: React.FC = () => {
           }}
         />
       )}
+      {trayIconCropDataURL && (
+        <TrayIconCropModal
+          imageDataURL={trayIconCropDataURL}
+          onCancel={() => setTrayIconCropDataURL('')}
+          onConfirm={async (dataURL) => {
+            await patchAppConfig({ customTrayIcon: dataURL })
+            setTrayIconCropDataURL('')
+            await updateTrayIcon()
+          }}
+        />
+      )}
       <SettingCard>
         <SettingItem title={t('settings.language')} divider>
           <Select
             classNames={{ trigger: 'data-[hover=true]:bg-default-200' }}
-            className="w-[150px]"
+            className="w-37.5"
             size="sm"
             selectedKeys={[language]}
             aria-label={t('settings.language')}
@@ -171,6 +190,24 @@ const GeneralConfig: React.FC = () => {
             }}
           />
         </SettingItem>
+        <SettingItem title={t('settings.githubProxy')} divider>
+          <Select
+            classNames={{ trigger: 'data-[hover=true]:bg-default-200' }}
+            className="w-50"
+            size="sm"
+            selectedKeys={[githubProxy]}
+            aria-label={t('settings.githubProxy')}
+            onSelectionChange={(v) => {
+              patchAppConfig({ githubProxy: Array.from(v)[0] as string })
+            }}
+          >
+            <SelectItem key="auto">{t('settings.githubProxy.auto')}</SelectItem>
+            <SelectItem key="direct">{t('settings.githubProxy.direct')}</SelectItem>
+            <SelectItem key="https://gh-proxy.org">gh-proxy.org</SelectItem>
+            <SelectItem key="https://ghfast.top">ghfast.top</SelectItem>
+            <SelectItem key="https://down.clashparty.org">down.clashparty.org</SelectItem>
+          </Select>
+        </SettingItem>
         <SettingItem title={t('settings.silentStart')} divider>
           <Switch
             size="sm"
@@ -204,7 +241,7 @@ const GeneralConfig: React.FC = () => {
             <div className="flex items-center gap-2">
               <Input
                 size="sm"
-                className="w-[100px]"
+                className="w-25"
                 type="number"
                 value={autoQuitWithoutCoreDelay.toString()}
                 onValueChange={async (v: string) => {
@@ -240,7 +277,7 @@ const GeneralConfig: React.FC = () => {
         >
           <Select
             classNames={{ trigger: 'data-[hover=true]:bg-default-200' }}
-            className="w-[150px]"
+            className="w-37.5"
             size="sm"
             selectionMode="multiple"
             selectedKeys={new Set(envType)}
@@ -343,11 +380,72 @@ const GeneralConfig: React.FC = () => {
               <Switch
                 size="sm"
                 isSelected={disableTrayIconColor}
+                isDisabled={Boolean(customTrayIcon)}
                 onValueChange={async (v) => {
                   await patchAppConfig({ disableTrayIconColor: v })
                   await updateTrayIcon()
                 }}
               />
+            </SettingItem>
+            <SettingItem
+              title={t('settings.customTrayIcon')}
+              actions={
+                <Tooltip content={t('settings.customTrayIconTooltip')}>
+                  <Button isIconOnly size="sm" variant="light">
+                    <IoIosHelpCircle className="text-lg" />
+                  </Button>
+                </Tooltip>
+              }
+              divider
+            >
+              <div className="flex items-center justify-end gap-2 min-w-0 max-w-[65%]">
+                {customTrayIcon && (
+                  <span
+                    className="truncate text-xs text-default-500"
+                    title={
+                      customTrayIcon.startsWith('data:image/')
+                        ? t('settings.customTrayIconBase64')
+                        : customTrayIcon
+                    }
+                  >
+                    {customTrayIcon.startsWith('data:image/')
+                      ? t('settings.customTrayIconBase64')
+                      : customTrayIcon}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onPress={async () => {
+                    const files = await getFilePath(
+                      ['png', 'jpg', 'jpeg', 'webp', 'ico', 'icns'],
+                      t('settings.customTrayIconSelect'),
+                      t('settings.customTrayIcon')
+                    )
+                    if (!files?.[0]) return
+                    if (rasterTrayIconPattern.test(files[0])) {
+                      setTrayIconCropDataURL(await readImageFileDataURL(files[0]))
+                      return
+                    }
+                    await patchAppConfig({ customTrayIcon: files[0] })
+                    await updateTrayIcon()
+                  }}
+                >
+                  {t(customTrayIcon ? 'settings.changeTrayIcon' : 'settings.selectTrayIcon')}
+                </Button>
+                {customTrayIcon && (
+                  <Button
+                    size="sm"
+                    variant="light"
+                    onPress={async () => {
+                      await patchAppConfig({ customTrayIcon: '' })
+                      await updateTrayIcon()
+                    }}
+                  >
+                    {t('common.default')}
+                  </Button>
+                )}
+              </div>
             </SettingItem>
           </>
         )}
@@ -443,6 +541,15 @@ const GeneralConfig: React.FC = () => {
             isSelected={disableAnimations}
             onValueChange={async (v) => {
               await patchAppConfig({ disableAnimations: v })
+            }}
+          />
+        </SettingItem>
+        <SettingItem title={t('settings.disableAppLog')} divider>
+          <Switch
+            size="sm"
+            isSelected={disableAppLog}
+            onValueChange={async (v) => {
+              await patchAppConfig({ disableAppLog: v })
             }}
           />
         </SettingItem>

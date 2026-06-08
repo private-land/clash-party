@@ -10,27 +10,49 @@ import i18next from 'i18next'
 import { mainWindow } from '../window'
 import { appLogger } from '../utils/logger'
 import { dataDir, exeDir, exePath, isPortable, resourcesFilesDir } from '../utils/dirs'
-import { getControledMihomoConfig } from '../config'
+import { getAppConfig, getControledMihomoConfig } from '../config'
 import { checkAdminPrivileges } from '../core/manager'
 import { parse } from '../utils/yaml'
 import * as chromeRequest from '../utils/chromeRequest'
 
+const GITHUB_PROXIES = ['https://gh-proxy.org', 'https://ghfast.top']
+
+function buildDownloadUrls(githubUrl: string, proxyPref = ''): string[] {
+  if (proxyPref === 'direct') return [githubUrl]
+  if (proxyPref && proxyPref !== 'auto') return [`${proxyPref}/${githubUrl}`]
+  // auto: try each proxy then fall back to direct
+  return [...GITHUB_PROXIES.map((p) => `${p}/${githubUrl}`), githubUrl]
+}
+
+async function tryDownload(
+  urls: string[],
+  options: Parameters<typeof chromeRequest.get>[1]
+): Promise<Awaited<ReturnType<typeof chromeRequest.get>>> {
+  let lastError: unknown
+  for (const url of urls) {
+    try {
+      return await chromeRequest.get(url, options)
+    } catch (e) {
+      lastError = e
+    }
+  }
+  throw lastError
+}
+
 export async function checkUpdate(): Promise<IAppVersion | undefined> {
-  const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
+  const [{ 'mixed-port': mixedPort = 7890 }, { githubProxy = '' }] = await Promise.all([
+    getControledMihomoConfig(),
+    getAppConfig()
+  ])
   await appLogger.info(`Checking for updates via proxy port ${mixedPort}`)
   try {
-    const res = await chromeRequest.get(
-      'https://github.com/xflash-panda/clash-party/releases/latest/download/latest.yml',
-      {
-        headers: { 'Content-Type': 'application/octet-stream' },
-        proxy: {
-          protocol: 'http',
-          host: '127.0.0.1',
-          port: mixedPort
-        },
-        responseType: 'text'
-      }
-    )
+    const githubUrl =
+      'https://github.com/xflash-panda/clash-party/releases/latest/download/latest.yml'
+    const res = await tryDownload(buildDownloadUrls(githubUrl, githubProxy), {
+      headers: { 'Content-Type': 'application/octet-stream' },
+      proxy: { protocol: 'http', host: '127.0.0.1', port: mixedPort },
+      responseType: 'text'
+    })
     const latest = parse(res.data as string) as IAppVersion
     const currentVersion = app.getVersion()
     await appLogger.info(`Current version: ${currentVersion}, Latest version: ${latest.version}`)
@@ -66,10 +88,13 @@ function compareVersions(a: string, b: string): number {
 }
 
 export async function downloadAndInstallUpdate(version: string): Promise<void> {
-  const { 'mixed-port': mixedPort = 7890 } = await getControledMihomoConfig()
+  const [{ 'mixed-port': mixedPort = 7890 }, { githubProxy = '' }] = await Promise.all([
+    getControledMihomoConfig(),
+    getAppConfig()
+  ])
   // URL uses full version with + encoded as %2B
   const urlVersion = encodeURIComponent(version)
-  const baseUrl = `https://github.com/xflash-panda/clash-party/releases/download/v${urlVersion}/`
+  const githubBase = `https://github.com/xflash-panda/clash-party/releases/download/v${urlVersion}/`
   // Filename uses base version only (electron-builder strips build metadata after +)
   const fileVersion = version.split('+')[0]
   const fileMap = {
@@ -97,30 +122,21 @@ export async function downloadAndInstallUpdate(version: string): Promise<void> {
       file = file.replace('macos', 'catalina')
     }
   }
-  await appLogger.info(`Downloading update: ${baseUrl}${file}`)
+  const proxy = { protocol: 'http' as const, host: '127.0.0.1', port: mixedPort }
+  await appLogger.info(`Downloading update: ${githubBase}${file}`)
   try {
     if (!existsSync(path.join(dataDir(), file))) {
-      const sha256Res = await chromeRequest.get(`${baseUrl}${file}.sha256`, {
-        proxy: {
-          protocol: 'http',
-          host: '127.0.0.1',
-          port: mixedPort
-        },
-        responseType: 'text'
-      })
+      const sha256Res = await tryDownload(
+        buildDownloadUrls(`${githubBase}${file}.sha256`, githubProxy),
+        { proxy, responseType: 'text' }
+      )
       const expectedHash = (sha256Res.data as string).trim().split(/\s+/)[0]
-      const res = await chromeRequest.get(`${baseUrl}${file}`, {
+      const res = await tryDownload(buildDownloadUrls(`${githubBase}${file}`, githubProxy), {
         responseType: 'arraybuffer',
         timeout: 0,
-        proxy: {
-          protocol: 'http',
-          host: '127.0.0.1',
-          port: mixedPort
-        },
-        headers: {
-          'Content-Type': 'application/octet-stream'
-        },
-        onProgress: (loaded, total) => {
+        proxy,
+        headers: { 'Content-Type': 'application/octet-stream' },
+        onProgress: (loaded: number, total: number) => {
           mainWindow?.webContents.send('updateDownloadProgress', {
             status: 'downloading',
             percent: Math.round((loaded / total) * 100)

@@ -32,6 +32,9 @@ import { applyTheme, setNativeTheme, setTitleBarOverlay } from '@renderer/utils/
 import { platform } from '@renderer/utils/init'
 import { TitleBarOverlayOptions } from 'electron'
 import SubStoreCard from '@renderer/components/sider/substore-card'
+import NetworkCard from '@renderer/components/sider/network-card'
+import UsageCard from '@renderer/components/sider/usage-card'
+import { useTrafficLogger } from '@renderer/hooks/use-traffic-logger'
 import { createTourDriver, getDriver, startTourIfNeeded } from '@renderer/utils/tour'
 import 'driver.js/dist/driver.css'
 import { useTranslation } from 'react-i18next'
@@ -41,10 +44,35 @@ let navigate: NavigateFunction
 
 export { getDriver }
 
+const ALL_SIDER_KEYS = [
+  'sysproxy',
+  'tun',
+  'profile',
+  'proxy',
+  'rule',
+  'resource',
+  'override',
+  'connection',
+  'mihomo',
+  'dns',
+  'sniff',
+  'log',
+  'substore',
+  'network',
+  'usage'
+]
+
+function mergeSiderOrder(saved: string[]): string[] {
+  const valid = saved.filter((k) => ALL_SIDER_KEYS.includes(k))
+  const missing = ALL_SIDER_KEYS.filter((k) => !valid.includes(k))
+  return [...valid, ...missing]
+}
+
 const App: React.FC = () => {
   const { t } = useTranslation()
   const { appConfig, patchAppConfig } = useAppConfig()
   const {
+    enableTrafficLogger = true,
     appTheme = 'system',
     customTheme,
     useWindowFrame = false,
@@ -62,11 +90,14 @@ const App: React.FC = () => {
       'dns',
       'sniff',
       'log',
-      'substore'
+      'substore',
+      'network',
+      'usage'
     ]
   } = appConfig || {}
+  useTrafficLogger(enableTrafficLogger)
   const narrowWidth = platform === 'darwin' ? 70 : 60
-  const [order, setOrder] = useState(siderOrder)
+  const [order, setOrder] = useState(mergeSiderOrder(siderOrder))
   const [siderWidthValue, setSiderWidthValue] = useState(siderWidth)
   const siderWidthValueRef = useRef(siderWidthValue)
   const [resizing, setResizing] = useState(false)
@@ -92,7 +123,7 @@ const App: React.FC = () => {
   }, [useWindowFrame])
 
   useEffect(() => {
-    setOrder(siderOrder)
+    setOrder(mergeSiderOrder(siderOrder))
     setSiderWidthValue(siderWidth)
   }, [siderOrder, siderWidth])
 
@@ -147,7 +178,8 @@ const App: React.FC = () => {
         return
       }
     }
-    navigate(navigateMap[active.id as string])
+    const dest = navigateMap[active.id as string]
+    if (dest) navigate(dest)
   }
 
   const navigateMap = {
@@ -163,7 +195,9 @@ const App: React.FC = () => {
     rule: 'rules',
     resource: 'resources',
     override: 'override',
-    substore: 'substore'
+    substore: 'substore',
+    network: 'network',
+    usage: 'traffic'
   }
 
   const componentMap = {
@@ -179,7 +213,9 @@ const App: React.FC = () => {
     rule: RuleCard,
     resource: ResourceCard,
     override: OverrideCard,
-    substore: SubStoreCard
+    substore: SubStoreCard,
+    network: NetworkCard,
+    usage: UsageCard
   }
 
   return (
@@ -200,10 +236,8 @@ const App: React.FC = () => {
     >
       {siderWidthValue === narrowWidth ? (
         <div style={{ width: `${narrowWidth}px` }} className="side h-full">
-          <div className="app-drag flex justify-center items-center z-40 bg-transparent h-[49px]">
-            {platform !== 'darwin' && (
-              <MihomoIcon className="h-[32px] leading-[32px] text-lg mx-px" />
-            )}
+          <div className="app-drag flex justify-center items-center z-40 bg-transparent h-12.25">
+            {platform !== 'darwin' && <MihomoIcon className="h-8 leading-8 text-lg mx-px" />}
             <UpdaterButton iconOnly={true} />
           </div>
           <div className="h-[calc(100%-110px)] overflow-y-auto no-scrollbar">
@@ -215,7 +249,7 @@ const App: React.FC = () => {
               })}
             </div>
           </div>
-          <div className="mt-2 flex justify-center items-center h-[48px]">
+          <div className="mt-2 flex justify-center items-center h-12">
             <Button
               size="sm"
               className="app-nodrag"
@@ -235,13 +269,13 @@ const App: React.FC = () => {
           style={{ width: `${siderWidthValue}px` }}
           className="side h-full overflow-y-auto no-scrollbar"
         >
-          <div className="app-drag sticky top-0 z-40 backdrop-blur bg-transparent h-[49px]">
+          <div className="app-drag sticky top-0 z-40 backdrop-blur bg-transparent h-12.25">
             <div
-              className={`flex justify-between p-2 ${!useWindowFrame && platform === 'darwin' ? 'ml-[60px]' : ''}`}
+              className={`flex justify-between p-2 ${!useWindowFrame && platform === 'darwin' ? 'ml-15' : ''}`}
             >
               <div className="flex ml-1">
-                <MihomoIcon className="h-[32px] leading-[32px] text-lg mx-px" />
-                <h3 className="text-lg font-bold leading-[32px]">Clash Party</h3>
+                <MihomoIcon className="h-8 leading-8 text-lg mx-px" />
+                <h3 className="text-lg font-bold leading-8">Clash Party</h3>
               </div>
               <UpdaterButton />
               <Button

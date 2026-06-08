@@ -9,7 +9,7 @@ import {
   Switch
 } from '@heroui/react'
 import React, { useState } from 'react'
-import { restartCore } from '@renderer/utils/ipc'
+import { mihomoHotReloadConfig } from '@renderer/utils/ipc'
 import { useTranslation } from 'react-i18next'
 import SettingItem from '../base/base-setting-item'
 
@@ -25,7 +25,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
 
   const onSave = async (): Promise<void> => {
     await updateOverrideItem(values)
-    await restartCore()
+    await mihomoHotReloadConfig()
     onClose()
   }
 
