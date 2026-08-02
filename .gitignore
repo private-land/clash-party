@@ -13,3 +13,7 @@ CLAUDE.md
 .claude/
 tsconfig.node.tsbuildinfo
 docs
+
+# Local agent design artifacts
+/docs/superpowers/
+/.superpowers/
